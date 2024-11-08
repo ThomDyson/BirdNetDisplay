@@ -38,6 +38,8 @@ An NTP/Timezone extension for WiFiManager.
 **[PicoMQTT](https://github.com/mlesniew/PicoMQTT)**
 ESP MQTT client and broker library
 
+## Visual Studio Code/Platformio vs Arduino IDE
+The source is configured to use platformio.ini to configure settings for TFT_ESPI.  To configure these settings under Arduino IDE, copy the User_Setup.h from Random Nerds, 
 ## Getting Started
 
 1. Install and configure BirdNet-Pi. 
