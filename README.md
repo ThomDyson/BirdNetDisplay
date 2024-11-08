@@ -77,7 +77,7 @@ ESP MQTT client and broker library
     
     6. Click "Send Test Notification". The text in the Notification Body should appear on the screen. Do NOT skip this step. 
     7. Click "Update settings".
-    
+
     ![Test Message Screen](/assets/no%20birds%20screen.jpg)
 
 
@@ -91,7 +91,10 @@ Birdnet-Pi will send notifications to the display based on the configuration of 
 Scientific Name is included in the notice, but is not displayed.
 
 Notifications rotate through the 10 most recent species. If a notice is received for a bird in rotation, the notification time is updated for that bird. Each notice expires after 24 hours.
-Touching the screen brings up two buttons. One button toggles night mode on/off. The second button opens a screen that shows the current network configuration information, with the option to enter wifi configuration mode. The display will exist wifi configuration mode after 2 minutes.
+
+Touching the screen brings up two buttons. One button toggles night mode on/off. The second button opens a screen that shows the current network configuration information, with the option to enter wifi configuration mode. 
+
+The display will exit wifi configuration mode after 2 minutes.
 
 ## Acknowledgements
 
