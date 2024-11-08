@@ -72,7 +72,7 @@ The source is configured to use platformio.ini to configure settings for TFT_eSP
 4. Configure BirdNet to send messages to the display.
     1. On the main screen, click on "Tools" on the right side of the menu. The default username is "birdnet", with no password. You may have changed this when you configured BirdNet-Pi.
     2. Click on "Settings" on the left side of the screen.
-    3. In the "Notifications" box, enter `mqtt://birdnetdisplay.local/birdnetpi/new`.  The "birdnetdisplay" should match the value you entered at step 4 above (under Wifi Manager config) plus ".local". The "birdnetpi" can be anything (no spaces please). This is the the MQTT topic. The display code shows all messages and does not  filter on this value.  Add one line for each CYD.
+    3. In the "Notifications" box, enter `mqtt://birdnetdisplay.local/birdnetpi`.  The "birdnetdisplay" must match the value you entered at step 4 above (under Wifi Manager config) plus ".local". The "birdnetpi" can be anything (no spaces please). This is the the MQTT topic. The display code shows all messages and does not  filter on this value.  Add one line for each CYD.
     4. In the "Notification Body" section, enter `CN=$comname;SN=$sciname;TM=$time;CF=$confidencepct;RS=$reason`. This encodes the information for parsing by the display. If you send a text notification with this encoding before there are any birds recorded, BirdNet sends an incomplete message and the CYD will not update.
     5. Check the boxes for kinds of notices you want to display.  Do NOT send the weekly report.
 
