@@ -203,12 +203,12 @@ void loadHostname() {
 
 // function for callback from WiFiManager when credentials are saved to save any
 // params set in WiFi Config to preferences.
-void wifiManSaveParamsCallback() {
+void wifiMan_Save_Params_Callback() {
   strncpy( myHostname, hostnameParam.getValue(), sizeof( myHostname ) - 1 );
   Serial.println( "saving hostname from params" );
   Serial.println( hostnameParam.getValue() );
   saveHostname();
-  lv_scr_load( Birdscreen );
+  // lv_scr_load( Birdscreen );
 }
 
 // function to print WiFi info to the serial output for debugging
@@ -510,15 +510,21 @@ int countEquals( const char *str ) {
 
 /* ***************** THIS IS THE SCREEN PROCESSSING SECTION */
 
+// function to get the stored SSID and display it during startup
 void start_loadingScreen() {
   tft.setTextColor( TFT_GREEN, TFT_BLACK );
-  tft.setTextFont( 2 );
+  tft.setTextSize( 1 );
   WiFi.mode( WIFI_STA ); // force station mode so we can read the stored SSID
   String storedSSID = wifiMan.getWiFiSSID();
-  Serial.print( "Connecting to wifi network" );
-  Serial.println( storedSSID );
-  bool connectionResult;
-  tft.println( "Connecting to wifi on \n" + storedSSID );
+  if ( storedSSID.isEmpty() ) {
+    Serial.print( "No stored SSID found. Entering wifi config mode" );
+    tft.drawString( "No stored wifi info found.", 10, 20, 4 );
+    tft.drawString( "Starting wifi config mode.", 10, 50, 4 );
+  } else {
+    Serial.printf( "Found stored SSID %s", storedSSID );
+    tft.drawString( "Connecting to wifi on", 10, 20, 4 );
+    tft.drawString( storedSSID, 10, 60, 4 );
+  }
 }
 
 void create_wifiStartScreen() {
@@ -562,10 +568,7 @@ void create_wifiStartScreen() {
   lv_obj_set_style_text_font( WiFiScreenLabel4, &lv_font_montserrat_14, LV_PART_MAIN );
   lv_obj_set_style_text_align( WiFiScreenLabel4, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN );
   lv_obj_align( WiFiScreenLabel4, LV_ALIGN_BOTTOM_MID, 0, 0 );
-  lv_label_set_text(
-      WiFiScreenLabel4,
-      " Device will exit configuration mode and resume in 2 minutes. "
-  );
+  lv_label_set_text( WiFiScreenLabel4, "  " );
 }
 
 // function to set the flag so doWiFiManager goes into config mode
@@ -730,20 +733,20 @@ void create_wifiConfirmScreen() {
 }
 
 void doWifiManager() {
-  int remaningTime = millis() - startTime;
-  int roundedValue = static_cast<int>( round( ( wifiPortalTimeOut - remaningTime / 1000 ) ) );
+  int remainingTime = millis() - startTime;
+  int roundedValue  = static_cast<int>( round( ( wifiPortalTimeOut - remainingTime / 1000 ) ) );
   // if config mode is on, test the time out status.
   if ( wifiConfigModeOn ) {
     wifiMan.process();
     // check for timeout
-    if ( remaningTime > ( wifiPortalTimeOut * 1000 ) ) {
+    if ( remainingTime > ( wifiPortalTimeOut * 1000 ) ) {
       Serial.println( "portaltimeout" );
       wifiMan.stopConfigPortal();
       wifiConfigModeOn = false;
       wifiConfirmed    = false;
       lv_scr_load( Birdscreen );
     } else {
-      Serial.printf( "Waitingon wifi portal to time out %d \n", remaningTime );
+      Serial.printf( "Waitingon wifi portal to time out %d \n", remainingTime );
       lv_label_set_text_fmt(
           WiFiScreenLabel4,
           " Device will exit configuration mode and resume in %d seconds. ", roundedValue
@@ -938,14 +941,14 @@ void mqttMessageCallback( const char *topic, char *payload ) {
   } // did we get a valid common name
 }
 
-void WiFiConfigModeCallback( WiFiManager *myWiFiManager ) {
+void WiFi_AP_Mode_Callback( WiFiManager *myWiFiManager ) {
   Serial.println( "[CALLBACK] configModeCallback fired" );
-  char line2[80] = "";
+  char line2[80] = "Network : ";
   char line3[80] = "Host/IP : ";
   if ( strlen( configPortalpassword ) == 0 ) {
     wifiMan.startConfigPortal( myHostname );
     strncat( line2, myHostname, sizeof( line2 ) - strlen( line2 ) - 1 );
-    strncat( line2, " - no password ", sizeof( line2 ) - strlen( line2 ) - 1 );
+    strncat( line2, "\n no password ", sizeof( line2 ) - strlen( line2 ) - 1 );
   } else {
     Serial.println( "starting wifiman config mode" );
     wifiMan.startConfigPortal( myHostname, configPortalpassword );
@@ -1010,34 +1013,38 @@ void setup_clock() {
 
 // function to setup wifi manager and timezone support
 bool setup_wifi() {
+  Serial.println( "Entering setup_wifi" );
   bool connectionResult;
-  wifiMan.addParameter(
-      &hostnameParam
-  ); // Add this parameter to the WiFiManager portal
+  wifiMan.addParameter( &hostnameParam ); // Add this parameter to the WiFiManager portal
   hostnameParam.setValue( myHostname, sizeof( myHostname ) );
-  wifiMan.setSaveParamsCallback(
-      wifiManSaveParamsCallback
-  ); // if the config page saves params.
-  wifiMan.setAPCallback( WiFiConfigModeCallback );
+  wifiMan.setSaveParamsCallback( wifiMan_Save_Params_Callback ); // if the config page saves params.
+  wifiMan.setAPCallback( WiFi_AP_Mode_Callback );
+  wifiMan.setConnectTimeout( 30 ); // 30 seconds until autoconnect timeout
 
   //  ******** Time Zone support
-
   WiFiManagerNS::init( &wifiMan, nullptr );
-  // WiFiManagerNS::init( &wifiManager, webserverPreCallback ); // using a
-  // custom callback add/override server routes
   // /!\ make sure "custom" is listed there as it's required to pull the "Setup Clock" button
   std::vector<const char *> menu = { "wifi", "info", "custom", "param", "sep", "restart", "exit" };
   wifiMan.setMenu( menu );
   //  ****** end Time zone support setup
 
-  wifiMan.setConnectTimeout( 20 ); // 20 seconds until timeout
-  //  wifiMan.setConfigPortalBlocking(false);
-  if ( strlen( configPortalpassword ) == 0 ) {
-    connectionResult = wifiMan.autoConnect( myHostname ); // not password protected AP and hostname is used as temp wifi name
+  String storedSSID = wifiMan.getWiFiSSID(); // Attempt to retrieve stored SSID
+  if ( storedSSID.isEmpty() ) {              // if there is no stored SSID, do not try to autoconnect
+    Serial.println( "No SSID stored found in wifi setup function" );
+    Serial.println( storedSSID );
+    wifiMan.startConfigPortal( myHostname );
+    connectionResult = true;
   } else {
-    connectionResult = wifiMan.autoConnect( myHostname, configPortalpassword ); //  password protected ap, hostname is used as temp wifi name
+    Serial.print( "Stored SSID: " );
+    Serial.println( storedSSID );
+    if ( strlen( configPortalpassword ) == 0 ) {
+      connectionResult = wifiMan.autoConnect( myHostname ); // not password protected AP and hostname is used as temp wifi name
+    } else {
+      connectionResult = wifiMan.autoConnect( myHostname, configPortalpassword ); //  password protected ap, hostname is used as temp wifi name
+    }
   }
 
+  Serial.println( "Leaving Wifi Setup" );
   return connectionResult;
 }
 
@@ -1058,9 +1065,7 @@ void setup() {
   tft.setTextSize( 2 );
 
   start_loadingScreen();
-
   init_LGVL();
-
   // Create the screens
   create_Birdscreen();
   create_wifiConfirmScreen();
@@ -1074,19 +1079,11 @@ void setup() {
 
   // start up wifi, use stored params if available
   bool wifiResult;
-  wifiConfigModeOn = true;
+  wifiConfigModeOn = true; // default to wificonfig mode until autoconnect works
   loadHostname();
-  String storedSSID = WiFi.SSID(); // Attempt to retrieve stored SSID
-  if ( storedSSID != "" ) {
-    Serial.print( "Stored SSID: " );
-    Serial.println( storedSSID );
-  } else {
-    Serial.println( "No SSID stored." );
-  }
-
   wifiResult = setup_wifi();
 
-  if ( !wifiResult ) {
+  if ( !wifiResult ) { // we didn't get a valid wifi autoconnect
     Serial.println( "Failed to connect" );
     tft.println( "Wifi Manager failed to startup correctly. Device will restart "
                  "in 1 minute." );
@@ -1132,10 +1129,10 @@ void loop() {
     lastUpdate = millis();
     update_clock(); // Update the clock
   }
-  lv_tick_inc( 25 ); // tell LVGL how much time has passed
-  lv_task_handler(); // let the GUI do its work
-  delay( 25 );       // let this time pass
-  lv_timer_handler();// LVGL needs to hanlde refreshes
+  lv_tick_inc( 25 );  // tell LVGL how much time has passed
+  lv_task_handler();  // let the GUI do its work
+  delay( 25 );        // let this time pass
+  lv_timer_handler(); // LVGL needs to hanlde refreshes
 
   mqttServer.loop(); // give the mqqt process a chance to update the bird data
   if ( !wifiConfigModeOn ) {
