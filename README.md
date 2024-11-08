@@ -4,7 +4,7 @@ BirdNet-Pi is a program to identify birds based on their calls, running on a Ras
 
 This code runs on a Cheap Yellow Display to show recent information from a BirdNet installation. While it is designed for a CYD, the code could be adapted to run on any ESP32 with a different display.
 
-This project requires that you have a BirdNet installation. I use [Nachuster's version](https://github.com/Nachtzuster/BirdNET-Pi). BirdNET-Pi is built on the [BirdNET](https://github.com/kahst/BirdNET-Analyzer) framework by [@kahst](https://github.com/kahst).
+This project requires that you have a BirdNet installation. I use [Nachtzuster's version](https://github.com/Nachtzuster/BirdNET-Pi). BirdNET-Pi is built on the [BirdNET](https://github.com/kahst/BirdNET-Analyzer) framework by [@kahst](https://github.com/kahst).
 
 This display uses the notification system built in to BirdNet-Pi to receive mqtt messages and display them. 
 
