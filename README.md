@@ -39,7 +39,8 @@ An NTP/Timezone extension for WiFiManager.
 ESP MQTT client and broker library
 
 ## Visual Studio Code/Platformio vs Arduino IDE
-The source is configured to use platformio.ini to configure settings for TFT_ESPI.  To configure these settings under Arduino IDE, copy the User_Setup.h from Random Nerds, 
+The source is configured to use platformio.ini to configure settings for TFT_eSPI.  To configure these settings under Arduino IDE, copy the [User_Setup.h](https://raw.githubusercontent.com/RuiSantosdotme/ESP32-TFT-Touchscreen/main/configs/User_Setup.h) from Random Nerds to your TFT_eSPI folder under your Arduino\libraries. Details are at [Random Nerds CYD Tutorial](https://randomnerdtutorials.com/cheap-yellow-display-esp32-2432s028r/). For my CYD, I had to add ` #define TFT_INVERSION_ON`.
+
 ## Getting Started
 
 1. Install and configure BirdNet-Pi. 
