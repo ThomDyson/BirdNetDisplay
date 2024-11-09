@@ -47,12 +47,12 @@ in the TFT_esPI User_setup.h
 
 // wifi setup info
 char myHostname[40]           = "BirdNetDisplay"; // default value later stored in preferences
-bool wifiConfigModeOn         = false;
-bool wifiConfirmed            = false;
 char configPortalpassword[40] = ""; // password to access the access point in WiFo config mode
 Preferences myPreferences;
 WiFiManager wifiMan;
 // Add a custom parameter for entering the hostname via the WiFiManager portal
+bool wifiConfigModeOn         = false;
+bool wifiConfirmed            = false;
 WiFiManagerParameter hostnameParam( "hostname", "Enter Hostname", myHostname, 40 );
 
 unsigned int startTime         = millis();
@@ -508,7 +508,7 @@ int countEquals( const char *str ) {
   return count;
 }
 
-/* ***************** THIS IS THE SCREEN PROCESSSING SECTION */
+/* ***************** THIS IS THE SCREEN PROCESSING SECTION */
 
 // function to get the stored SSID and display it during startup
 void start_loadingScreen() {
@@ -1140,4 +1140,6 @@ void loop() {
   }
   doWifiManager();
   updateBacklighting();
+  removeOldEntries( birds, MAX_NOTICES ); 
+
 }
