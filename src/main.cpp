@@ -47,12 +47,12 @@ in the TFT_esPI User_setup.h
 
 // wifi setup info
 char myHostname[40]           = "BirdNetDisplay"; // default value later stored in preferences
-char configPortalpassword[40] = ""; // password to access the access point in WiFo config mode
+char configPortalpassword[40] = "";               // password to access the access point in WiFo config mode
 Preferences myPreferences;
 WiFiManager wifiMan;
 // Add a custom parameter for entering the hostname via the WiFiManager portal
-bool wifiConfigModeOn         = false;
-bool wifiConfirmed            = false;
+bool wifiConfigModeOn = false;
+bool wifiConfirmed    = false;
 WiFiManagerParameter hostnameParam( "hostname", "Enter Hostname", myHostname, 40 );
 
 unsigned int startTime         = millis();
@@ -472,16 +472,19 @@ void removeOldEntries( dataLayout *birds[], int arraySize ) {
   time_t now        = time( NULL ); // Get the current time
   bool removedEntry = false;
   for ( int i = 0; i < arraySize; ++i ) {
-    if ( difftime( now, birds[i]->TM ) > ( ENTRY_MAX_HOURS * 3600 ) ) { // If the time difference is more than the configured value
-      // Reset the bird entry
-      Serial.print( "Removing bird entry at index: " );
-      Serial.println( i );
-      memset( birds[i]->CN, 0, sizeof( birds[i]->CN ) );
-      memset( birds[i]->SN, 0, sizeof( birds[i]->SN ) );
-      birds[i]->CF = 0;
-      birds[i]->TM = 0; // Set time to 0 to indicate an empty entry
-      memset( birds[i]->RS, 0, sizeof( birds[i]->RS ) );
-    }
+    if  ( birds[i]->CN[0] != '\0' ) {
+      if ( difftime( now, birds[i]->TM ) > ( ENTRY_MAX_HOURS * 3600 ) ) { // If the time difference is more than the configured value
+        // Reset the bird entry
+        Serial.print( "Removing bird entry at index: " );
+        Serial.print( birds[i]->TM );
+        Serial.println( i );
+        memset( birds[i]->CN, 0, sizeof( birds[i]->CN ) );
+        memset( birds[i]->SN, 0, sizeof( birds[i]->SN ) );
+        birds[i]->CF = 0;
+        birds[i]->TM = 0; // Set time to 0 to indicate an empty entry
+        memset( birds[i]->RS, 0, sizeof( birds[i]->RS ) );
+      }
+  }
   }
   // Check if all entries have been removed
   bool allEmpty = true;
@@ -1140,6 +1143,5 @@ void loop() {
   }
   doWifiManager();
   updateBacklighting();
-  removeOldEntries( birds, MAX_NOTICES ); 
-
+  removeOldEntries( birds, MAX_NOTICES );
 }

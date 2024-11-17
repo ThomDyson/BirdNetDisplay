@@ -109,7 +109,6 @@ The built-in light sensor controls teh backlight level.
 
 It's an Open Source world, where we benefit from the hard work of so many others. Without those libraries, this would never have happened. Special thanks to everyone who makes BirdNet-Pi work and the people at Random Nerds for getting me stared with a CYD. Shout out to the AI who did some of the grunt work.
 
-## License
 
-This work is licensed under a Creative Commons Attribution 4.0 International License.
+
 
