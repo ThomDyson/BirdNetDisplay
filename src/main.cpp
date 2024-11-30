@@ -16,6 +16,9 @@ https://github.com/PaulStoffregen/XPT2046_Touchscreen - Note: this library
 doesn't require further configuration
 Install the WiFimanagerTZ library from
 https://github.com/tobozo/WiFiManagerTz/tree/master
+Install the Tiny JPG Decoder
+https://github.com/Bodmer/TJpg_Decoder
+
 */
 
 /* *************************************************
@@ -29,11 +32,6 @@ set more params (display duration, max entries, expiration time) as wifi config 
 *************************************************
 */
 
-/*
-For my display I needed to uncomment
-#define TFT_INVERSION_ON
-in the TFT_esPI User_setup.h
-*/
 #include <ESPmDNS.h>
 #include <PicoMQTT.h>
 #include <Preferences.h>
@@ -44,6 +42,16 @@ in the TFT_esPI User_setup.h
 #include <XPT2046_Touchscreen.h>
 #include <lvgl.h>
 #include <time.h>
+
+// Include the jpeg decoder library
+#include <TJpg_Decoder.h>
+#include <FS.h>
+#include <LittleFS.h>
+#include <HTTPClient.h>
+
+// Load tabs attached to this sketch
+#include "FS_helpers.h"
+#include "image_handling.h"
 
 // wifi setup info
 char myHostname[40]           = "BirdNetDisplay"; // default value later stored in preferences
@@ -87,18 +95,18 @@ TFT_eSPI tft = TFT_eSPI(); // Initialize your display
 constexpr int MAX_NOTICES                     = 10;
 constexpr int NOTICE_ELEMENTS                 = 5;
 char notices[MAX_NOTICES][NOTICE_ELEMENTS][2] = {};
-constexpr int ENTRY_MAX_HOURS                 = 24; // how long a bird shuold be listed before it expires from display
+constexpr int ENTRY_MAX_HOURS                 = 24; // how long a bird should be listed before it expires from display
 int birdCount                                 = 0;
 int curDisplay                                = 0;
 const int MATCH_NOT_FOUND                     = 99;
 unsigned long previousLoopTime                = 0;    // Store the last time the refresh was run
-const long refreshInterval                    = 4000; // determines how long a bird stays on screen. in Milliseconds
+const long refreshInterval                    = 6000; // determines how long a bird stays on screen. in Milliseconds
 
 // holds the data for each sighting
 struct dataLayout {
-  char CN[75] = "";           // comon name
+  char CN[75] = "";           // common name
   char SN[75] = "";           // scientific name
-  int CF      = 0;            // confidece factor
+  int CF      = 0;            // confidence factor
   time_t TM   = time( NULL ); // time of sighting
   char RS[30] = "";           // reasonfor notice - detection, first time today,etc
 };
@@ -114,6 +122,7 @@ lv_obj_t *CNLabel;
 lv_obj_t *CFLabel;
 lv_obj_t *TMLabel;
 lv_obj_t *RSLabel;
+lv_obj_t *countLabel;
 lv_obj_t *BottomLabel;
 lv_obj_t *WiFiScreenTitle;
 lv_obj_t *WiFiScreenLabel1;
@@ -135,7 +144,7 @@ lv_obj_t *nightmodeButton;
 lv_timer_t *button_cleanup_timer;
 lv_color_t lvColorBlue      = lv_color_hex( 0x00008B );
 lv_color_t lvColorDark      = lv_color_hex( 0x21130D );
-lv_color_t lvColorLight     = lv_color_hex( 0xEEEEE4 );
+lv_color_t lvColorLight     = lv_color_hex( 0xEEEEEE );
 lv_color_t lvColorGreen     = lv_color_hex( 0x1B5E20 );
 lv_color_t lvColorOrange    = lv_color_hex( 0xFFA500 );
 lv_color_t lvColorLightGrey = lv_color_hex( 0xD3D3D3 );
@@ -158,6 +167,11 @@ int text_height = 0;
 #define DRAW_BUF_SIZE ( SCREEN_WIDTH * SCREEN_HEIGHT / 10 * ( LV_COLOR_DEPTH / 8 ) )
 uint32_t draw_buf[DRAW_BUF_SIZE / 4];
 
+// image display data and handling
+const char *globalDataFilePath      = "/birds.csv";         // holds the list of birds and image URLs
+const char *globalMetaDataFileName  = "/file_metadata.txt"; // Metadata file to track cached images
+const char *globalCurrentScreenName = "";
+
 // Get the Touchscreen data
 void touchscreen_read( lv_indev_t *indev, lv_indev_data_t *data ) {
   // Checks if Touchscreen was touched, and prints X, Y and Pressure (Z)
@@ -171,15 +185,16 @@ void touchscreen_read( lv_indev_t *indev, lv_indev_data_t *data ) {
     z           = p.z;
     data->state = LV_INDEV_STATE_PRESSED;
     // Set the coordinates
-    data->point.x = x;
-    data->point.y = y;
+    data->point.x = constrain( x, 0, SCREEN_WIDTH );
+    data->point.y = constrain( y, 0, SCREEN_HEIGHT );
+    ;
   } else {
     data->state = LV_INDEV_STATE_RELEASED;
   }
 }
 
 // function to save the host name into esp32 preferences
-void saveHostname() {
+void save_hostname() {
   myPreferences.begin( "wifi", false );              // Namespace for your preferences
   myPreferences.putString( "hostname", myHostname ); // Save the hostname
   myPreferences.end();
@@ -187,7 +202,7 @@ void saveHostname() {
 }
 
 // function to read the host name from  esp32 preferences
-void loadHostname() {
+void load_hostname() {
   myPreferences.begin( "wifi", true ); // Open the namespace in read mode
   if ( myPreferences.isKey( "hostname" ) ) {
     myPreferences.getString( "hostname" )
@@ -207,15 +222,14 @@ void wifiMan_Save_Params_Callback() {
   strncpy( myHostname, hostnameParam.getValue(), sizeof( myHostname ) - 1 );
   Serial.println( "saving hostname from params" );
   Serial.println( hostnameParam.getValue() );
-  saveHostname();
+  save_hostname();
   // lv_scr_load( Birdscreen );
 }
 
 // function to print WiFi info to the serial output for debugging
-void wifiInfo() {
+void wifi_info() {
   struct tm timeinfo;
   getLocalTime( &timeinfo );
-  // can contain gargbage on esp32 if wifi is not ready yet
   Serial.println( &timeinfo, "%A, %B %d %Y %H:%M:%S" );
   Serial.println( "[WIFI] WIFI_INFO DEBUG" );
   WiFi.printDiag( Serial );
@@ -231,7 +245,7 @@ void wifiInfo() {
 void process_object_nightmode( lv_obj_t *obj ) {
   if ( lv_obj_check_type( obj, &lv_label_class ) ) {
     // If it's a label, do something specific
-    // if in a button and in night mode OR not in a button and not in lightmode
+    // if in a button and in night mode OR not in a button and not in Nightmode
     if ( ( lv_obj_check_type( lv_obj_get_parent( obj ), &lv_button_class ) && nightmode ) ||
          ( !lv_obj_check_type( lv_obj_get_parent( obj ), &lv_button_class ) && !nightmode ) ) {
       lv_obj_set_style_text_color( obj, lvColorDark, LV_PART_MAIN );
@@ -288,8 +302,9 @@ void nightmode_button_touch_callback( lv_event_t *e ) {
 
 // function to handle callback when wifi button is pressed
 void wifiButton_Touch_callback( lv_event_t *e ) {
+  globalCurrentScreenName = "wificonfirmscreen";
   lv_scr_load( wifiConfirmScreen );
-  wifiInfo();
+  wifi_info();
   char info[200];
 
   // Format SSID, Hostname, and IP Address into the buffer
@@ -301,7 +316,7 @@ void wifiButton_Touch_callback( lv_event_t *e ) {
 
 /* ****************** THIS IS THE BIRD DATA SECTION */
 // function to count valid entries in the birds array
-int countBirds() {
+int count_birds() {
   int counter = 0;
   for ( int i = 0; i < MAX_NOTICES; ++i ) {
     if ( strlen( birds[i]->CN ) > 5 ) {
@@ -312,25 +327,18 @@ int countBirds() {
 }
 
 // function to check if bird exists in the array, based on common name
-int isBirdInArray( dataLayout *knownBirds[], int size, const char *newCN ) {
+int is_bird_in_array( dataLayout *knownBirds[], int size, const char *newCN ) {
   for ( int i = 0; i < size; ++i ) {
     if ( strcmp( knownBirds[i]->CN, newCN ) == 0 ) {
-      Serial.print( knownBirds[i]->CN );
-      Serial.print( " is  " );
-      Serial.println( newCN );
       return i; // CN exists in the array
-    } else {
-      Serial.print( knownBirds[i]->CN );
-      Serial.print( " is not " );
-      Serial.println( newCN );
-    }
+    } 
   }
   return MATCH_NOT_FOUND; // CN does not exist in the array
 }
 
 // function to find the oldest entry in the array of birds
 // that's the one to update when we get a new entry
-int findOldestEntry( dataLayout *birds[], int size ) {
+int find_oldest_entry( dataLayout *birds[], int size ) {
   int oldestIndex   = -1;
   time_t oldestTime = time( nullptr ); // Initialize with current time
   for ( int i = 0; i < size; ++i ) {
@@ -343,7 +351,7 @@ int findOldestEntry( dataLayout *birds[], int size ) {
 }
 
 // Function to get the descriptive time difference
-void getTimeAgoDescription( time_t pastTime, char *buffer, size_t bufferSize ) {
+void get_time_ago_description( time_t pastTime, char *buffer, size_t bufferSize ) {
   time_t now = time( NULL ); // Get current time
   double seconds =
       difftime( now, pastTime ); // Calculate the difference in seconds
@@ -370,7 +378,7 @@ void getTimeAgoDescription( time_t pastTime, char *buffer, size_t bufferSize ) {
 }
 
 // function to display the birds on the screen
-void displayBirds( const int *whichbird ) {
+void display_birds( const int *whichbird ) {
   unsigned long currentMillis =
       millis(); // Get the current time in milliseconds
   char countStatus[12] = "";
@@ -404,13 +412,13 @@ void displayBirds( const int *whichbird ) {
         snprintf( num_str, sizeof( num_str ), "%d", displayCount );
         strncat( countStatus, num_str, ( sizeof( countStatus ) - strlen( countStatus ) - 1 ) );
         strncat( countStatus, " of ", 5 );
-        tempInt = countBirds();
+        tempInt = count_birds();
         snprintf( num_str, sizeof( num_str ), "%d", tempInt );
         strncat( countStatus, num_str, ( sizeof( countStatus ) - strlen( countStatus ) - 1 ) );
         strncat( countStatus, ")", 2 );
         Serial.println( countStatus );
 
-        getTimeAgoDescription( // Get the time description
+        get_time_ago_description( // Get the time description
             birds[currentIndex]->TM, timeDescription,
             sizeof( timeDescription )
         );
@@ -439,23 +447,31 @@ void displayBirds( const int *whichbird ) {
         lv_label_set_text( CFLabel, itoa( birds[currentIndex]->CF, temptextCF, 10 ) );
 
         strncat( tempTitle, timeDescription, 99 );
-        strncat( tempTitle, countStatus, ( sizeof( tempTitle ) - strlen( tempTitle ) - 1 ) );
+        // strncat( tempTitle, countStatus, ( sizeof( tempTitle ) - strlen( tempTitle ) - 1 ) );
         lv_label_set_text( TMLabel, tempTitle );
+        lv_label_set_text( countLabel, countStatus );
 
         if ( strcasecmp( birds[currentIndex]->RS, "detection" ) == 0 ) {
           lv_label_set_text( RSLabel, "  " );
-          /*
-          lv_style_set_text_color(
-              &RSStyle,
-              lv_color_black()
-          );
-          */
         } else if ( strcasecmp( birds[currentIndex]->RS, "New Species Detection" ) == 0 ) {
           lv_label_set_text( RSLabel, LV_SYMBOL_EYE_OPEN );
         } else if ( strcasecmp( birds[currentIndex]->RS, "First time today" ) == 0 ) {
           lv_label_set_text( RSLabel, LV_SYMBOL_EYE_OPEN );
         } else {
           lv_label_set_text( RSLabel, birds[currentIndex]->RS );
+        }
+        /* ************** BEGIN IMAGE PROCESSING ************/
+        String imageName = get_image_info( birds[currentIndex]->CN, globalDataFilePath, globalMetaDataFileName );
+        if ( !imageName.isEmpty() ) {
+          Serial.print( "Displaying " );
+          Serial.println( imageName );
+          int myresult = TJpgDec.drawFsJpg( 2, 45, imageName, LittleFS );
+        } else {
+          if ( nightmode ) {
+            tft.fillRect( 2, 45, 150, 150, 0x2081 ); // same color as LVGL dark background
+          } else {
+            tft.fillRect( 2, 45, 150, 150, 0xEF7D ); // same color as LVGL light background
+          }
         }
       }
       curDisplay = currentIndex;
@@ -468,15 +484,14 @@ void displayBirds( const int *whichbird ) {
 }
 
 // Function to check and remove birds older than 24 hours
-void removeOldEntries( dataLayout *birds[], int arraySize ) {
+void remove_old_entries( dataLayout *birds[], int arraySize ) {
   time_t now        = time( NULL ); // Get the current time
   bool removedEntry = false;
   for ( int i = 0; i < arraySize; ++i ) {
-    if  ( birds[i]->CN[0] != '\0' ) {
+    if ( birds[i]->CN[0] != '\0' ) {
       if ( difftime( now, birds[i]->TM ) > ( ENTRY_MAX_HOURS * 3600 ) ) { // If the time difference is more than the configured value
         // Reset the bird entry
         Serial.print( "Removing bird entry at index: " );
-        Serial.print( birds[i]->TM );
         Serial.println( i );
         memset( birds[i]->CN, 0, sizeof( birds[i]->CN ) );
         memset( birds[i]->SN, 0, sizeof( birds[i]->SN ) );
@@ -484,7 +499,7 @@ void removeOldEntries( dataLayout *birds[], int arraySize ) {
         birds[i]->TM = 0; // Set time to 0 to indicate an empty entry
         memset( birds[i]->RS, 0, sizeof( birds[i]->RS ) );
       }
-  }
+    }
   }
   // Check if all entries have been removed
   bool allEmpty = true;
@@ -500,7 +515,7 @@ void removeOldEntries( dataLayout *birds[], int arraySize ) {
 }
 
 // function to validate the mqtt message has the right number of elements to parse
-int countEquals( const char *str ) {
+int count_equals( const char *str ) {
   int count = 0;
   while ( *str != '\0' ) {
     if ( *str == '=' ) { // Check if the current character is '='
@@ -515,6 +530,7 @@ int countEquals( const char *str ) {
 
 // function to get the stored SSID and display it during startup
 void start_loadingScreen() {
+  tft.fillScreen( TFT_BLACK );
   tft.setTextColor( TFT_GREEN, TFT_BLACK );
   tft.setTextSize( 1 );
   WiFi.mode( WIFI_STA ); // force station mode so we can read the stored SSID
@@ -574,8 +590,8 @@ void create_wifiStartScreen() {
   lv_label_set_text( WiFiScreenLabel4, "  " );
 }
 
-// function to set the flag so doWiFiManager goes into config mode
-//  dowifiManager is in the loop
+// function to set the flag so do_wifi_manager goes into config mode
+//  do_wifi_manager is in the loop
 void wifi_yes_button_callback() {
   wifiConfirmed = true;
 }
@@ -590,6 +606,10 @@ void button_cleanup_timer_callback( lv_timer_t *t ) {
     lv_obj_del_async( wifiButton ); // Delete the button
     wifiButton = NULL;              // Clear the pointer
   }
+   // redraw the screen to clean things up
+    if ( strcmp( globalCurrentScreenName, "birdscreen" ) == 0 ) {
+        display_birds( &curDisplay );
+  }
 }
 
 // Event handler for the bird screen touch
@@ -599,7 +619,7 @@ void birdscreen_touch_callback( lv_event_t *screenEvent ) {
 
       wifiButton = lv_button_create( Birdscreen ); // Create a button to switch to wifi config confirmation screen
       lv_obj_set_size( wifiButton, 50, 50 );
-      lv_obj_align( wifiButton, LV_ALIGN_BOTTOM_LEFT, 5, -10 );
+      lv_obj_align( wifiButton, LV_ALIGN_BOTTOM_LEFT, 5, -5 );
       lv_obj_set_style_shadow_width( wifiButton, 0, LV_PART_MAIN );
       if ( nightmode ) {
         lv_obj_set_style_text_color( wifiButton, lvColorDark, LV_PART_MAIN );
@@ -618,7 +638,7 @@ void birdscreen_touch_callback( lv_event_t *screenEvent ) {
     if ( !nightmodeButton ) { // Create a button to switch to night mode and back
       nightmodeButton = lv_button_create( Birdscreen );
       lv_obj_set_size( nightmodeButton, 50, 50 );
-      lv_obj_align( nightmodeButton, LV_ALIGN_LEFT_MID, 5, 0 );
+      lv_obj_align( nightmodeButton, LV_ALIGN_BOTTOM_RIGHT, -5, -5 );
       lv_obj_set_style_shadow_width( nightmodeButton, 0, LV_PART_MAIN );
 
       lv_obj_t *label_nightmodeButton = lv_label_create( nightmodeButton );
@@ -647,31 +667,39 @@ void create_Birdscreen() {
   Birdscreen = lv_obj_create( NULL ); // Create a new screen (parent is NULL)
 
   // Add a label to Birdscreen
-  CNLabel = lv_label_create( Birdscreen );
-  lv_label_set_long_mode( CNLabel, LV_LABEL_LONG_WRAP );
+  CNLabel = lv_label_create( Birdscreen ); // common name
+  lv_label_set_long_mode( CNLabel, LV_LABEL_LONG_SCROLL_CIRCULAR );
   lv_obj_set_width( CNLabel, 300 );
   lv_obj_set_style_text_align( CNLabel, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN );
   lv_obj_set_style_text_font( CNLabel, &lv_font_montserrat_28, LV_PART_MAIN );
-  lv_obj_align( CNLabel, LV_ALIGN_TOP_MID, 0, 20 );
+  lv_obj_align( CNLabel, LV_ALIGN_TOP_MID, 0, 5 );
   lv_label_set_text( CNLabel, "No birds to display yet." );
 
   lv_style_init( &timeStyle );
-  TMLabel = lv_label_create( Birdscreen );
+  TMLabel = lv_label_create( Birdscreen ); // time since siting
+  lv_label_set_long_mode( TMLabel, LV_LABEL_LONG_WRAP );
+  lv_obj_set_width( TMLabel, 120 );
   lv_obj_set_style_text_font( TMLabel, &lv_font_montserrat_20, LV_PART_MAIN );
+  lv_obj_set_style_text_align( TMLabel, LV_TEXT_ALIGN_CENTER, 0 );
   lv_obj_add_style( TMLabel, &timeStyle, 0 );
-  lv_obj_align( TMLabel, LV_ALIGN_CENTER, 0, -20 );
+  lv_obj_align( TMLabel, LV_ALIGN_CENTER, 75, -40 );
   // lv_label_set_text(TMLabel, LV_SYMBOL_EYE_OPEN);
   lv_label_set_text( TMLabel, "" );
 
-  RSLabel = lv_label_create( Birdscreen );
+  RSLabel = lv_label_create( Birdscreen ); // notification reason
   lv_obj_set_style_text_font( TMLabel, &lv_font_montserrat_22, LV_PART_MAIN );
-  lv_obj_align( RSLabel, LV_ALIGN_CENTER, 0, 30 );
+  lv_obj_align( RSLabel, LV_ALIGN_CENTER, 75, 30 );
   lv_label_set_text( RSLabel, "" );
 
-  CFLabel = lv_label_create( Birdscreen );
+  CFLabel = lv_label_create( Birdscreen ); // confidence level
   lv_obj_set_style_text_font( CFLabel, &lv_font_montserrat_20, LV_PART_MAIN );
   lv_obj_align( CFLabel, LV_ALIGN_BOTTOM_RIGHT, -5, -5 );
   lv_label_set_text( CFLabel, "" );
+
+  countLabel = lv_label_create( Birdscreen ); // confidence level
+  lv_obj_set_style_text_font( countLabel, &lv_font_montserrat_14, LV_PART_MAIN );
+  lv_obj_align( countLabel, LV_ALIGN_BOTTOM_LEFT, 5, -5 );
+  lv_label_set_text( countLabel, "" );
 
   lv_obj_add_event_cb( Birdscreen, birdscreen_touch_callback, LV_EVENT_CLICKED, NULL );
 }
@@ -729,13 +757,14 @@ void create_wifiConfirmScreen() {
   lv_obj_add_event_cb(
       wifiNoButton,
       []( lv_event_t *e ) {
+        globalCurrentScreenName = "birdscreen";
         lv_scr_load( Birdscreen ); // Load bird screen when the button is clicked
       },
       LV_EVENT_CLICKED, NULL
   );
 }
 
-void doWifiManager() {
+void do_wifi_manager() {
   int remainingTime = millis() - startTime;
   int roundedValue  = static_cast<int>( round( ( wifiPortalTimeOut - remainingTime / 1000 ) ) );
   // if config mode is on, test the time out status.
@@ -745,11 +774,12 @@ void doWifiManager() {
     if ( remainingTime > ( wifiPortalTimeOut * 1000 ) ) {
       Serial.println( "portaltimeout" );
       wifiMan.stopConfigPortal();
-      wifiConfigModeOn = false;
-      wifiConfirmed    = false;
+      wifiConfigModeOn        = false;
+      wifiConfirmed           = false;
+      globalCurrentScreenName = "birdscreen";
       lv_scr_load( Birdscreen );
     } else {
-      Serial.printf( "Waitingon wifi portal to time out %d \n", remainingTime );
+      Serial.printf( "Waiting on wifi portal to time out %d \n", remainingTime );
       lv_label_set_text_fmt(
           WiFiScreenLabel4,
           " Device will exit configuration mode and resume in %d seconds. ", roundedValue
@@ -778,7 +808,8 @@ void doWifiManager() {
     strncat( line3, " : ", sizeof( line3 ) - strlen( line3 ) - 1 );
     strncat( line3, WiFi.softAPIP().toString().c_str(), sizeof( line3 ) - strlen( line3 ) - 1 );
 
-    wifiInfo();
+    wifi_info();
+    globalCurrentScreenName = "wifiscreen";
     lv_scr_load( wifiScreen );
     lv_label_set_text( WiFiScreenLabel2, "" );
     lv_label_set_text( WiFiScreenLabel3, "" );
@@ -789,14 +820,14 @@ void doWifiManager() {
 }
 
 // function to read the light sensor and set the backlight
-void updateBacklighting() {
+void update_backlighting() {
   int lightLevel       = analogRead( LIGHT_SENSOR_PIN );
   int targetBrightness = map( lightLevel, 0, 1500, 255, 10 );    // Adjust to scale and reverse the range
   targetBrightness     = constrain( targetBrightness, 10, 255 ); // Double check it's within PWM limits
   analogWrite( BACKLIGHT_PIN, targetBrightness );                // Set the backlight brightness
 }
-// function to initialize the LGVL setup
-void init_LGVL() {
+// function to initialize the LVGL setup
+void init_LVGL() {
   String LVGL_Arduino = String( "LVGL Library Version: " ) + lv_version_major() +
                         "." + lv_version_minor() + "." + lv_version_patch();
   Serial.println( LVGL_Arduino );
@@ -816,10 +847,10 @@ void init_LGVL() {
   lv_indev_set_read_cb( inputDev, touchscreen_read );
 }
 
-void mqttMessageCallback( const char *topic, char *payload ) {
+void mqtt_message_callback( const char *topic, char *payload ) {
   // payload might be binary, but PicoMQTT guarantees that it's zero-terminated
   Serial.printf( "Received message in topic '%s': %s\n", topic, payload );
-  // split the mqtt messagge into elements
+  // split the mqtt message into elements
   //  https://stackoverflow.com/questions/57949764/in-c-split-name-value-pairs-into-arrays
   char *KVPpointers[NOTICE_ELEMENTS][2] = {};
   char *token;
@@ -835,11 +866,11 @@ void mqttMessageCallback( const char *topic, char *payload ) {
   constexpr int ISA_VALUE = 1;
   int kvpState            = ISA_KEY; // the key should be first
 
-  int validationCount = countEquals( payload ); // messages should be in the form  CN=$comname;SN=$sciname;TM=$time;CF=$confidencepct;RS=$reason
+  int validationCount = count_equals( payload ); // messages should be in the form  CN=$comname;SN=$sciname;TM=$time;CF=$confidencepct;RS=$reason
 
   if ( validationCount != 5 ) { // if we cannot parse the data, manually create an entry. Not going to try to match against an existing entry
-    Serial.printf( "Incorrectly formated mqtt mesage received. '%s' \n", payload );
-    oldestBirdIndex = findOldestEntry( birds, MAX_NOTICES );
+    Serial.printf( "Incorrectly formatted mqtt message received. '%s' \n", payload );
+    oldestBirdIndex = find_oldest_entry( birds, MAX_NOTICES );
     if ( oldestBirdIndex == -1 ) {
       oldestBirdIndex = 0;
     }
@@ -859,8 +890,7 @@ void mqttMessageCallback( const char *topic, char *payload ) {
     KVPpointers[kvp][kvpState] = strtok( thisdata, "=" );
 
     while ( kvp < NOTICE_ELEMENTS && KVPpointers[kvp][kvpState] != NULL ) { // loop through splitting it up and saving the pointers
-
-      if ( kvpState == ISA_VALUE ) { // update kvpState and key_value
+      if ( kvpState == ISA_VALUE ) {                                        // update kvpState and key_value
         kvp++;
         kvpState                   = ISA_KEY;
         KVPpointers[kvp][kvpState] = strtok( NULL, "=" );
@@ -882,7 +912,7 @@ void mqttMessageCallback( const char *topic, char *payload ) {
 
   if ( kvpCNkey > -1 ) { // if we  have a common name, process the sighting, otherwise skip it
     // test if new sighting. do not add duplicate birds to the display array
-    matchingBird = isBirdInArray( birds, MAX_NOTICES, KVPpointers[kvpCNkey][ISA_VALUE] );
+    matchingBird = is_bird_in_array( birds, MAX_NOTICES, KVPpointers[kvpCNkey][ISA_VALUE] );
     if ( matchingBird == MATCH_NOT_FOUND ) {
       newBird = true;
     } else {
@@ -892,24 +922,39 @@ void mqttMessageCallback( const char *topic, char *payload ) {
     // now it should all be parsed
     // if it is not in the current array of birds, we add it to the array
     if ( newBird ) {
-      oldestBirdIndex = findOldestEntry( birds, MAX_NOTICES );
+      oldestBirdIndex = find_oldest_entry( birds, MAX_NOTICES );
       if ( oldestBirdIndex == -1 ) {
         oldestBirdIndex = 0;
       }
+      birds[oldestBirdIndex]->TM = time( nullptr ); // set a default value in case it is not included
+      birds[oldestBirdIndex]->CF = 0;
+      strncpy( birds[oldestBirdIndex]->SN, " ", 2 );
+      strncpy( birds[oldestBirdIndex]->RS, "None", 5 );
+
       for ( int i = 0; i < kvp; i++ ) {
         printf( "\n Match key[%d] = %s\nvalue[%d] = %s\n", i, KVPpointers[i][ISA_KEY], i, KVPpointers[i][ISA_VALUE] );
         if ( strcmp( KVPpointers[i][ISA_KEY], "CN" ) == 0 ) {
-          strncpy( birds[oldestBirdIndex]->CN, KVPpointers[i][ISA_VALUE], 74 );
+          if ( KVPpointers[i][ISA_VALUE] != NULL ) {
+            strncpy( birds[oldestBirdIndex]->CN, KVPpointers[i][ISA_VALUE], 74 );
+          } else {
+            strncpy( birds[oldestBirdIndex]->CN, "None", 5 );
+          }
         } else if ( strcmp( KVPpointers[i][ISA_KEY], "SN" ) == 0 ) {
-          strncpy( birds[oldestBirdIndex]->SN, KVPpointers[i][ISA_VALUE], 74 );
+          if ( KVPpointers[i][ISA_VALUE] != NULL ) {
+            strncpy( birds[oldestBirdIndex]->SN, KVPpointers[i][ISA_VALUE], 74 );
+          }
         } else if ( strcmp( KVPpointers[i][ISA_KEY], "RS" ) == 0 ) {
-          strncpy( birds[oldestBirdIndex]->RS, KVPpointers[i][ISA_VALUE], 30 );
-          Serial.print( " Setting reason as " );
-          Serial.println( KVPpointers[i][ISA_VALUE] );
+          if ( KVPpointers[i][ISA_VALUE] != NULL ) {
+            strncpy( birds[oldestBirdIndex]->RS, KVPpointers[i][ISA_VALUE], 30 );
+            Serial.print( " Setting reason as " );
+            Serial.println( KVPpointers[i][ISA_VALUE] );
+          }
         } else if ( strcmp( KVPpointers[i][ISA_KEY], "TM" ) == 0 ) {
           birds[oldestBirdIndex]->TM = time( nullptr );
         } else if ( strcmp( KVPpointers[i][ISA_KEY], "CF" ) == 0 ) {
-          birds[oldestBirdIndex]->CF = atoi( KVPpointers[i][ISA_VALUE] );
+          if ( KVPpointers[i][ISA_VALUE] != NULL ) {
+            birds[oldestBirdIndex]->CF = atoi( KVPpointers[i][ISA_VALUE] );
+          }
         } else {
           printf( "\nkey[%d] = %s\nvalue[%d] = %s\n", i, KVPpointers[i][ISA_KEY], i, KVPpointers[i][ISA_VALUE] );
         }
@@ -919,6 +964,10 @@ void mqttMessageCallback( const char *topic, char *payload ) {
       for ( int i = 0; i < kvp; i++ ) {
         if ( strcmp( KVPpointers[i][ISA_KEY], "TM" ) == 0 ) {
           birds[matchingBird]->TM = time( nullptr );
+        } else if ( strcmp( KVPpointers[i][ISA_KEY], "CF" ) == 0 ) {
+          if ( KVPpointers[i][ISA_VALUE] != NULL ) {
+            birds[matchingBird]->CF = atoi( KVPpointers[i][ISA_VALUE] );
+          }
         }
       }
       curDisplay = matchingBird;
@@ -944,7 +993,7 @@ void mqttMessageCallback( const char *topic, char *payload ) {
   } // did we get a valid common name
 }
 
-void WiFi_AP_Mode_Callback( WiFiManager *myWiFiManager ) {
+void wifi_ap_mode_callback( WiFiManager *myWiFiManager ) {
   Serial.println( "[CALLBACK] configModeCallback fired" );
   char line2[80] = "Network : ";
   char line3[80] = "Host/IP : ";
@@ -962,7 +1011,8 @@ void WiFi_AP_Mode_Callback( WiFiManager *myWiFiManager ) {
   strncat( line3, myHostname, sizeof( line3 ) - strlen( line3 ) - 1 );
   strncat( line3, "  :  ", sizeof( line3 ) - strlen( line3 ) - 1 );
   strncat( line3, WiFi.softAPIP().toString().c_str(), sizeof( line3 ) - strlen( line3 ) - 1 );
-  wifiInfo();
+  wifi_info();
+  globalCurrentScreenName = "wifiscreen";
   lv_scr_load( wifiScreen );
   lv_label_set_text( WiFiScreenLabel2, line2 );
   lv_label_set_text( WiFiScreenLabel3, line3 );
@@ -982,7 +1032,7 @@ void update_clock() {
       hour -= 12;
     }
 
-    lv_obj_set_style_text_font( label_minute, &lv_font_montserrat_40, 0 );
+    // lv_obj_set_style_text_font( label_minute, &lv_font_montserrat_40, 0 );
     snprintf( hour_str, sizeof( hour_str ), "%02d", hour );
     snprintf( minute_str, sizeof( minute_str ), "%02d", tm_info->tm_min );
     snprintf( second_str, sizeof( second_str ), "%02d", tm_info->tm_sec );
@@ -998,13 +1048,13 @@ void setup_clock() {
   label_minute = lv_label_create( Birdscreen );
   label_second = lv_label_create( Birdscreen );
 
-  lv_obj_set_style_text_font( label_hour, &lv_font_montserrat_40, 0 );
+  lv_obj_set_style_text_font( label_hour, &lv_font_montserrat_34, 0 );
   lv_obj_set_style_text_font( label_minute, &lv_font_montserrat_34, 0 );
-  lv_obj_set_style_text_font( label_second, &lv_font_montserrat_40, 0 );
+  lv_obj_set_style_text_font( label_second, &lv_font_montserrat_34, 0 );
 
-  lv_obj_align( label_hour, LV_ALIGN_BOTTOM_MID, -70, 0 );
+  lv_obj_align( label_hour, LV_ALIGN_BOTTOM_MID, -50, 0 );
   lv_obj_align( label_minute, LV_ALIGN_BOTTOM_MID, 0, 0 );
-  lv_obj_align( label_second, LV_ALIGN_BOTTOM_MID, 70, 0 );
+  lv_obj_align( label_second, LV_ALIGN_BOTTOM_MID, 50, 0 );
 
   lv_label_set_text( label_hour, "" );
   lv_label_set_text( label_minute, "Setting the clock" );
@@ -1021,7 +1071,7 @@ bool setup_wifi() {
   wifiMan.addParameter( &hostnameParam ); // Add this parameter to the WiFiManager portal
   hostnameParam.setValue( myHostname, sizeof( myHostname ) );
   wifiMan.setSaveParamsCallback( wifiMan_Save_Params_Callback ); // if the config page saves params.
-  wifiMan.setAPCallback( WiFi_AP_Mode_Callback );
+  wifiMan.setAPCallback( wifi_ap_mode_callback );
   wifiMan.setConnectTimeout( 30 ); // 30 seconds until autoconnect timeout
 
   //  ******** Time Zone support
@@ -1051,6 +1101,14 @@ bool setup_wifi() {
   return connectionResult;
 }
 
+// callback function for the jpg decoder to display the image
+bool tft_output( int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t *bitmap ) {
+  if ( y >= tft.height() ) // Stop further decoding as image is running off bottom of screen
+    return 0;
+  tft.pushImage( x, y, w, h, bitmap );
+  return 1; // tells decoder to continue to next block
+}
+
 void setup() {
   Serial.begin( 115200 );
 
@@ -1067,8 +1125,22 @@ void setup() {
   tft.setRotation( 1 );
   tft.setTextSize( 2 );
 
+  TJpgDec.setJpgScale( 1 );
+  TJpgDec.setSwapBytes( true );
+  TJpgDec.setCallback( tft_output );
+  if ( !LittleFS.begin( false ) ) {
+    Serial.println( "LittleFS Mount Failed" );
+    tft.drawString( "File system failed to mount.", 10, 20, 2 );
+    delay( 30000 );
+    return;
+  }
+  clean_up_jpg_files( globalMetaDataFileName );
+  delete_unlisted_jpg_files( globalMetaDataFileName );
+  cleanup_file_system_space( globalMetaDataFileName );
+  list_LittleFS();
+  init_LVGL();
   start_loadingScreen();
-  init_LGVL();
+
   // Create the screens
   create_Birdscreen();
   create_wifiConfirmScreen();
@@ -1083,7 +1155,7 @@ void setup() {
   // start up wifi, use stored params if available
   bool wifiResult;
   wifiConfigModeOn = true; // default to wificonfig mode until autoconnect works
-  loadHostname();
+  load_hostname();
   wifiResult = setup_wifi();
 
   if ( !wifiResult ) { // we didn't get a valid wifi autoconnect
@@ -1117,31 +1189,30 @@ void setup() {
 
     // Subscribe to a topic and attach a callback
     mqttServer.subscribe( "#", []( const char *topic, char *payload ) {
-      mqttMessageCallback( topic, payload );
+      mqtt_message_callback( topic, payload );
     } );
     mqttServer.begin();
 
     // Load the first screen at the start
+    globalCurrentScreenName = "birdscreen";
     lv_scr_load( Birdscreen );
   }
 }
 
 void loop() {
-  int loopduration = millis() - lastUpdate;
-  if ( loopduration >= 1000 ) { // Update every second
-    lastUpdate = millis();
-    update_clock(); // Update the clock
-  }
-  lv_tick_inc( 25 );  // tell LVGL how much time has passed
-  lv_task_handler();  // let the GUI do its work
-  delay( 25 );        // let this time pass
-  lv_timer_handler(); // LVGL needs to hanlde refreshes
 
-  mqttServer.loop(); // give the mqqt process a chance to update the bird data
-  if ( !wifiConfigModeOn ) {
-    displayBirds( &curDisplay );
+    update_clock();            // Update the clock
+
+  lv_tick_inc( 150 ); // tell LVGL how much time has passed
+  lv_task_handler();           // let the GUI do its work
+  delay( 150 );                // let this time pass
+  lv_timer_handler();          // LVGL needs to handle refreshes
+
+  mqttServer.loop(); // give the mqtt process a chance to update the bird data
+  if ( strcmp( globalCurrentScreenName, "birdscreen" ) == 0 ) {
+    display_birds( &curDisplay );
   }
-  doWifiManager();
-  updateBacklighting();
-  removeOldEntries( birds, MAX_NOTICES );
+  do_wifi_manager();
+  update_backlighting();
+  remove_old_entries( birds, MAX_NOTICES );
 }
