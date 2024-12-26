@@ -44,6 +44,7 @@ bool getImageFile( String url, String filename ) {
           }
           yield();
         }
+      
         Serial.println();
         Serial.print( "[HTTP] connection closed or file end.\n" );
       }

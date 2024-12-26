@@ -112,12 +112,14 @@ struct dataLayout {
 };
 
 dataLayout *birds[MAX_NOTICES];
+char weeklyreportdata[2048] = "No weekly report yet.";
 
 // Declare global screen objects
 lv_obj_t *wifiConfirmScreen;
 lv_obj_t *Birdscreen;
 lv_obj_t *wifiScreen;
 lv_obj_t *loadingScreen;
+lv_obj_t *WeeklyReportScreen;
 lv_obj_t *CNLabel;
 lv_obj_t *CFLabel;
 lv_obj_t *TMLabel;
@@ -141,7 +143,14 @@ lv_obj_t *wifiNoButton;
 
 lv_obj_t *wifiButton; // needs to be global for the call back to work?
 lv_obj_t *nightmodeButton;
+
+lv_obj_t *labelWeeklyReportBackButton;
+lv_obj_t *weeklyReportButton;
+lv_obj_t *weeklyReportBackButton;
+lv_obj_t *weeklyDataLabel;
+
 lv_timer_t *button_cleanup_timer;
+
 lv_color_t lvColorBlue      = lv_color_hex( 0x00008B );
 lv_color_t lvColorDark      = lv_color_hex( 0x21130D );
 lv_color_t lvColorLight     = lv_color_hex( 0xEEEEEE );
@@ -246,11 +255,20 @@ void process_object_nightmode( lv_obj_t *obj ) {
   if ( lv_obj_check_type( obj, &lv_label_class ) ) {
     // If it's a label, do something specific
     // if in a button and in night mode OR not in a button and not in Nightmode
-    if ( ( lv_obj_check_type( lv_obj_get_parent( obj ), &lv_button_class ) && nightmode ) ||
-         ( !lv_obj_check_type( lv_obj_get_parent( obj ), &lv_button_class ) && !nightmode ) ) {
-      lv_obj_set_style_text_color( obj, lvColorDark, LV_PART_MAIN );
+    if ( lv_obj_check_type( lv_obj_get_parent( obj ), &lv_button_class ) ) {
+      if ( nightmode ) {
+        lv_obj_set_style_text_color( obj, lvColorDark, LV_PART_MAIN );
+      } else {
+        lv_obj_set_style_text_color( obj, lvColorLight, LV_PART_MAIN );
+      }
     } else {
-      lv_obj_set_style_text_color( obj, lvColorLight, LV_PART_MAIN );
+      if ( !nightmode ) {
+        lv_obj_set_style_bg_color( obj, lvColorLight, LV_PART_MAIN );
+        lv_obj_set_style_text_color( obj, lvColorDark, LV_PART_MAIN );
+      } else {
+        lv_obj_set_style_bg_color( obj, lvColorDark, LV_PART_MAIN );
+        lv_obj_set_style_text_color( obj, lvColorLight, LV_PART_MAIN );
+      }
     }
   } else if ( lv_obj_check_type( obj, &lv_button_class ) ) {
     if ( nightmode ) {
@@ -258,15 +276,21 @@ void process_object_nightmode( lv_obj_t *obj ) {
     } else {
       lv_obj_set_style_bg_color( obj, lvColorBlue, LV_PART_MAIN );
     }
-
   } else if ( lv_obj_check_type( obj, &lv_textarea_class ) ) {
     // If it's a text area, handle it separately (if needed)
-    Serial.println( "Found a text area!" );
     // Add your code here for text areas
+
   } else {
     // Handle other object types if needed
-    const lv_obj_class_t *class_ptr = lv_obj_get_class( obj );
-    Serial.printf( "Found another object type: %s\n", *class_ptr );
+    // const lv_obj_class_t *class_ptr = lv_obj_get_class( obj );
+    Serial.println( "Found another object type: " );
+    if ( !nightmode ) {
+      lv_obj_set_style_bg_color( obj, lvColorLight, LV_PART_MAIN );
+      lv_obj_set_style_text_color( obj, lvColorDark, LV_PART_MAIN );
+    } else {
+      lv_obj_set_style_bg_color( obj, lvColorDark, LV_PART_MAIN );
+      lv_obj_set_style_text_color( obj, lvColorLight, LV_PART_MAIN );
+    }
   }
 }
 
@@ -298,6 +322,7 @@ void nightmode_button_touch_callback( lv_event_t *e ) {
   process_screen_objects_night( Birdscreen );
   process_screen_objects_night( wifiConfirmScreen );
   process_screen_objects_night( wifiScreen );
+  process_screen_objects_night( WeeklyReportScreen );
 }
 
 // function to handle callback when wifi button is pressed
@@ -312,6 +337,11 @@ void wifiButton_Touch_callback( lv_event_t *e ) {
 
   // Update the LVGL label text with the WiFi info
   lv_label_set_text( BottomLabel, info );
+}
+
+void weekly_report_button_callback( lv_event_t *e ) {
+  globalCurrentScreenName = "weeklyreportscreen";
+  lv_scr_load( WeeklyReportScreen );
 }
 
 /* ****************** THIS IS THE BIRD DATA SECTION */
@@ -331,7 +361,7 @@ int is_bird_in_array( dataLayout *knownBirds[], int size, const char *newCN ) {
   for ( int i = 0; i < size; ++i ) {
     if ( strcmp( knownBirds[i]->CN, newCN ) == 0 ) {
       return i; // CN exists in the array
-    } 
+    }
   }
   return MATCH_NOT_FOUND; // CN does not exist in the array
 }
@@ -606,9 +636,14 @@ void button_cleanup_timer_callback( lv_timer_t *t ) {
     lv_obj_del_async( wifiButton ); // Delete the button
     wifiButton = NULL;              // Clear the pointer
   }
-   // redraw the screen to clean things up
-    if ( strcmp( globalCurrentScreenName, "birdscreen" ) == 0 ) {
-        display_birds( &curDisplay );
+
+  if ( weeklyReportButton ) {
+    lv_obj_del_async( weeklyReportButton );
+    weeklyReportButton = NULL;
+  }
+  // redraw the screen to clean things up
+  if ( strcmp( globalCurrentScreenName, "birdscreen" ) == 0 ) {
+    display_birds( &curDisplay );
   }
 }
 
@@ -618,7 +653,8 @@ void birdscreen_touch_callback( lv_event_t *screenEvent ) {
     if ( !wifiButton ) {
 
       wifiButton = lv_button_create( Birdscreen ); // Create a button to switch to wifi config confirmation screen
-      lv_obj_set_size( wifiButton, 50, 50 );
+      lv_obj_set_width( wifiButton,LV_SIZE_CONTENT ); // The button width will adjust to the text content
+      lv_obj_set_height( wifiButton, LV_SIZE_CONTENT );
       lv_obj_align( wifiButton, LV_ALIGN_BOTTOM_LEFT, 5, -5 );
       lv_obj_set_style_shadow_width( wifiButton, 0, LV_PART_MAIN );
       if ( nightmode ) {
@@ -630,19 +666,42 @@ void birdscreen_touch_callback( lv_event_t *screenEvent ) {
       }
 
       lv_obj_t *label_wifiButton = lv_label_create( wifiButton );
-      lv_obj_set_style_text_font( label_wifiButton, &lv_font_montserrat_24, LV_PART_MAIN ); // Change font to a larger size
+      lv_obj_set_style_text_font( label_wifiButton, &lv_font_montserrat_16, LV_PART_MAIN ); // Change font to a larger size
       lv_label_set_text( label_wifiButton, LV_SYMBOL_WIFI );
       lv_obj_add_event_cb( wifiButton, wifiButton_Touch_callback, LV_EVENT_CLICKED, NULL ); // Add event callback to the button
     }
 
+    if ( !weeklyReportButton ) {
+      weeklyReportButton = lv_button_create( Birdscreen );
+      lv_obj_remove_flag( weeklyReportButton, LV_OBJ_FLAG_PRESS_LOCK );
+      lv_obj_align( weeklyReportButton, LV_ALIGN_TOP_LEFT, 10, 10 );
+      lv_obj_set_width( weeklyReportButton, LV_SIZE_CONTENT ); // The button width will adjust to the text content
+      lv_obj_set_height( weeklyReportButton, LV_SIZE_CONTENT );
+
+      if ( nightmode ) {
+        lv_obj_set_style_text_color( weeklyReportButton, lvColorDark, LV_PART_MAIN );
+        lv_obj_set_style_bg_color( weeklyReportButton, lvColorLight, LV_PART_MAIN );
+      } else {
+        lv_obj_set_style_text_color( weeklyReportButton, lvColorLight, LV_PART_MAIN );
+        lv_obj_set_style_bg_color( weeklyReportButton, lvColorBlue, LV_PART_MAIN );
+      }
+
+      lv_obj_t *label_weeklyreport_button = lv_label_create( weeklyReportButton );
+      //    lv_obj_set_style_text_font( label_weeklyreport_button, &lv_font_montserrat_16, LV_PART_MAIN );
+      lv_obj_set_style_text_font( label_weeklyreport_button, &lv_font_montserrat_16, LV_PART_MAIN ); // Change font to a larger size
+      lv_label_set_text( label_weeklyreport_button, LV_SYMBOL_LIST );
+      lv_obj_add_event_cb( weeklyReportButton, weekly_report_button_callback, LV_EVENT_CLICKED, NULL );
+    }
+
     if ( !nightmodeButton ) { // Create a button to switch to night mode and back
       nightmodeButton = lv_button_create( Birdscreen );
-      lv_obj_set_size( nightmodeButton, 50, 50 );
+      lv_obj_set_width( nightmodeButton,LV_SIZE_CONTENT ); // The button width will adjust to the text content
+      lv_obj_set_height( nightmodeButton, LV_SIZE_CONTENT );
       lv_obj_align( nightmodeButton, LV_ALIGN_BOTTOM_RIGHT, -5, -5 );
       lv_obj_set_style_shadow_width( nightmodeButton, 0, LV_PART_MAIN );
 
       lv_obj_t *label_nightmodeButton = lv_label_create( nightmodeButton );
-      lv_obj_set_style_text_font( label_nightmodeButton, &lv_font_montserrat_24, LV_PART_MAIN ); // Change font to a larger size
+      lv_obj_set_style_text_font( label_nightmodeButton, &lv_font_montserrat_16, LV_PART_MAIN ); // Change font to a larger size
 
       lv_label_set_text( label_nightmodeButton, LV_SYMBOL_EYE_OPEN );
       if ( nightmode ) {
@@ -671,7 +730,7 @@ void create_Birdscreen() {
   lv_label_set_long_mode( CNLabel, LV_LABEL_LONG_SCROLL_CIRCULAR );
   lv_obj_set_width( CNLabel, 300 );
   lv_obj_set_style_text_align( CNLabel, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN );
-  lv_obj_set_style_text_font( CNLabel, &lv_font_montserrat_28, LV_PART_MAIN );
+  lv_obj_set_style_text_font( CNLabel, &lv_font_montserrat_24, LV_PART_MAIN );
   lv_obj_align( CNLabel, LV_ALIGN_TOP_MID, 0, 5 );
   lv_label_set_text( CNLabel, "No birds to display yet." );
 
@@ -687,7 +746,7 @@ void create_Birdscreen() {
   lv_label_set_text( TMLabel, "" );
 
   RSLabel = lv_label_create( Birdscreen ); // notification reason
-  lv_obj_set_style_text_font( TMLabel, &lv_font_montserrat_22, LV_PART_MAIN );
+  lv_obj_set_style_text_font( TMLabel, &lv_font_montserrat_20, LV_PART_MAIN );
   lv_obj_align( RSLabel, LV_ALIGN_CENTER, 75, 30 );
   lv_label_set_text( RSLabel, "" );
 
@@ -697,7 +756,7 @@ void create_Birdscreen() {
   lv_label_set_text( CFLabel, "" );
 
   countLabel = lv_label_create( Birdscreen ); // confidence level
-  lv_obj_set_style_text_font( countLabel, &lv_font_montserrat_14, LV_PART_MAIN );
+  lv_obj_set_style_text_font( countLabel, &lv_font_montserrat_20, LV_PART_MAIN );
   lv_obj_align( countLabel, LV_ALIGN_BOTTOM_LEFT, 5, -5 );
   lv_label_set_text( countLabel, "" );
 
@@ -742,10 +801,7 @@ void create_wifiConfirmScreen() {
   lv_obj_remove_flag( wifiNoButton, LV_OBJ_FLAG_PRESS_LOCK );
   lv_obj_align( wifiNoButton, LV_ALIGN_CENTER, lv_obj_get_width( wifiNoButton ) + 50, 20 );
   lv_obj_set_style_text_font( label_wifiNoButton, &lv_font_montserrat_20, LV_PART_MAIN );
-  lv_obj_set_width(
-      wifiNoButton,
-      LV_SIZE_CONTENT
-  ); // The button width will adjust to the text content
+  lv_obj_set_width( wifiNoButton, LV_SIZE_CONTENT ); // The button width will adjust to the text content
   lv_obj_set_height( wifiNoButton, LV_SIZE_CONTENT );
   lv_label_set_text( label_wifiNoButton, "No" );
 
@@ -762,6 +818,50 @@ void create_wifiConfirmScreen() {
       },
       LV_EVENT_CLICKED, NULL
   );
+}
+
+// Function to create the Weekly Report screen
+void create_weekly_report_screen() {
+  if ( !WeeklyReportScreen ) {
+    WeeklyReportScreen = lv_obj_create( NULL ); // Create a new screen (parent is NULL)
+    // Create the title label
+    lv_obj_t *title = lv_label_create( WeeklyReportScreen );
+    lv_label_set_text( title, "Weekly Report" );
+    lv_obj_set_style_text_font( title, &lv_font_montserrat_20, LV_STATE_DEFAULT ); // Adjust font size as needed
+    lv_obj_align( title, LV_ALIGN_TOP_MID, 0, 10 );                                // Position at the top-center of the screen
+
+    // Create a container for the label
+    lv_obj_t *list_container = lv_obj_create( WeeklyReportScreen );
+    lv_obj_set_size( list_container, SCREEN_HEIGHT - 30, 190 ); // Adjust size based on your screen
+    lv_obj_set_scroll_dir( list_container, LV_DIR_VER );        // Vertical scrolling
+    lv_obj_align( list_container, LV_ALIGN_CENTER, 0, 20 );     // Center on the screen
+    lv_obj_set_scroll_dir( list_container, LV_DIR_VER );        // Enable vertical scrolling
+    lv_obj_set_style_pad_all( list_container, 5, 0 );           // Add padding
+    lv_obj_set_style_bg_color( list_container, lv_color_hex( 0x00AA00 ), LV_PART_MAIN );
+
+    // Create a label for the parsed data
+    weeklyDataLabel = lv_label_create( list_container );
+    lv_label_set_text( weeklyDataLabel, weeklyreportdata );                   // Set parsed data
+    lv_obj_set_style_text_font( weeklyDataLabel, &lv_font_montserrat_14, 0 ); // Smaller font for detailed content
+    lv_label_set_long_mode( weeklyDataLabel, LV_LABEL_LONG_WRAP );
+    lv_obj_set_width( weeklyDataLabel, lv_pct( 80 ) ); // Ensure it fits within the container
+    // lv_obj_set_height( weeklyDataLabel, 190 );
+
+    weeklyReportBackButton      = lv_button_create( WeeklyReportScreen );
+    labelWeeklyReportBackButton = lv_label_create( weeklyReportBackButton );
+    lv_obj_remove_flag( weeklyReportBackButton, LV_OBJ_FLAG_PRESS_LOCK );
+    lv_obj_align( weeklyReportBackButton, LV_ALIGN_TOP_LEFT, 5, 5 );
+
+    lv_obj_set_style_text_font( labelWeeklyReportBackButton, &lv_font_montserrat_14, LV_PART_MAIN );
+    lv_label_set_text( labelWeeklyReportBackButton, LV_SYMBOL_BACKSPACE );
+    lv_obj_set_width( weeklyReportBackButton, LV_SIZE_CONTENT ); // The button width will adjust to the text content
+    lv_obj_set_height( weeklyReportBackButton, LV_SIZE_CONTENT );
+    lv_obj_add_event_cb( weeklyReportBackButton, []( lv_event_t *e ) {
+              globalCurrentScreenName = "birdscreen";
+               lv_scr_load( Birdscreen ); }, LV_EVENT_CLICKED, NULL );
+  } else {
+    lv_label_set_text( weeklyDataLabel, weeklyreportdata ); // Set parsed data
+  }
 }
 
 void do_wifi_manager() {
@@ -819,6 +919,50 @@ void do_wifi_manager() {
   }
 }
 
+// function to parse the weekly report into an array
+void parse_weekly_report( char *input, char *output ) {
+
+  const char *pos = strstr( input, "---" );                  // Find the position of the delimiter
+  size_t length   = pos ? ( pos - input ) : strlen( input ); // Calculate the length up to the delimiter or end of input
+
+  size_t outputIndex    = 0; // Index to keep track of the output buffer
+  const char *lineStart = input;
+  while ( lineStart < input + length ) {
+    // Find the end of the current line
+    const char *lineEnd = strchr( lineStart, '\n' );
+    if ( !lineEnd )
+      lineEnd = input + length; // Handle the last line without a newline
+
+    // Check if the line is non-empty (ignoring whitespace)
+    bool isEmpty = true;
+    for ( const char *ptr = lineStart; ptr < lineEnd; ++ptr ) {
+      if ( !isspace( *ptr ) ) {
+        isEmpty = false;
+        break;
+      }
+    }
+
+    // Copy non-empty lines to the output buffer
+    if ( !isEmpty ) {
+      size_t lineLength = lineEnd - lineStart;
+      if ( outputIndex + lineLength + 1 < 2048 ) { // Ensure we don't exceed buffer size
+        strncpy( output + outputIndex, lineStart, lineLength );
+        outputIndex += lineLength;
+        output[outputIndex++] = '\n'; // Add a newline to separate lines
+      } else {
+        Serial.println( "Output buffer overflow in weekly report parsing" );
+        break;
+      }
+    }
+
+    // Move to the next line
+    lineStart = lineEnd + 1;
+  }
+
+  // Null-terminate the output buffer
+  output[outputIndex] = '\0';
+}
+
 // function to read the light sensor and set the backlight
 void update_backlighting() {
   int lightLevel       = analogRead( LIGHT_SENSOR_PIN );
@@ -826,6 +970,7 @@ void update_backlighting() {
   targetBrightness     = constrain( targetBrightness, 10, 255 ); // Double check it's within PWM limits
   analogWrite( BACKLIGHT_PIN, targetBrightness );                // Set the backlight brightness
 }
+
 // function to initialize the LVGL setup
 void init_LVGL() {
   String LVGL_Arduino = String( "LVGL Library Version: " ) + lv_version_major() +
@@ -866,131 +1011,140 @@ void mqtt_message_callback( const char *topic, char *payload ) {
   constexpr int ISA_VALUE = 1;
   int kvpState            = ISA_KEY; // the key should be first
 
-  int validationCount = count_equals( payload ); // messages should be in the form  CN=$comname;SN=$sciname;TM=$time;CF=$confidencepct;RS=$reason
-
-  if ( validationCount != 5 ) { // if we cannot parse the data, manually create an entry. Not going to try to match against an existing entry
-    Serial.printf( "Incorrectly formatted mqtt message received. '%s' \n", payload );
-    oldestBirdIndex = find_oldest_entry( birds, MAX_NOTICES );
-    if ( oldestBirdIndex == -1 ) {
-      oldestBirdIndex = 0;
-    }
-    strncpy( birds[oldestBirdIndex]->CN, payload, 74 );
-    strncpy( birds[oldestBirdIndex]->SN, "none", 5 );
-    strncpy( birds[oldestBirdIndex]->RS, "", 20 );
-    birds[oldestBirdIndex]->TM = time( nullptr );
-    birds[oldestBirdIndex]->CF = 0;
-
-    curDisplay = oldestBirdIndex;
-
+  if ( ( strstr( payload, "Week" ) != nullptr ) && ( strstr( payload, "Report" ) != nullptr ) ) // if this is weekly report, parser separately
+  {
+    parse_weekly_report( payload, weeklyreportdata );
+    Serial.println( "parsed data " );
+    Serial.println( weeklyreportdata );
+    create_weekly_report_screen();
   } else {
 
-    char *thisdata = strstr( payload, "\n" ) + strlen( "\n" );
-    // we do this first to set the target variable. future calls reference the
-    // output of the previous call
-    KVPpointers[kvp][kvpState] = strtok( thisdata, "=" );
+    int validationCount = count_equals( payload ); // messages should be in the form  CN=$comname;SN=$sciname;TM=$time;CF=$confidencepct;RS=$reason
 
-    while ( kvp < NOTICE_ELEMENTS && KVPpointers[kvp][kvpState] != NULL ) { // loop through splitting it up and saving the pointers
-      if ( kvpState == ISA_VALUE ) {                                        // update kvpState and key_value
-        kvp++;
-        kvpState                   = ISA_KEY;
-        KVPpointers[kvp][kvpState] = strtok( NULL, "=" );
-      } else {                                                  // if (kvpState == ISA_KEY)
-        if ( strcmp( KVPpointers[kvp][ISA_KEY], "CN" ) == 0 ) { // Common Name is needed to check for new sightings
-          kvpCNkey = kvp;
-        }
-        kvpState = ISA_VALUE;
-
-        token = strtok( NULL, ";" ); // test to see if there is a value for the key. empty values pull in the next key equals
-        if ( strchr( token, '=' ) == NULL ) {
-          KVPpointers[kvp][kvpState] = token;
-        } else {
-          KVPpointers[kvp][kvpState] = notFound;
-        }
-      }
-    }
-  }
-
-  if ( kvpCNkey > -1 ) { // if we  have a common name, process the sighting, otherwise skip it
-    // test if new sighting. do not add duplicate birds to the display array
-    matchingBird = is_bird_in_array( birds, MAX_NOTICES, KVPpointers[kvpCNkey][ISA_VALUE] );
-    if ( matchingBird == MATCH_NOT_FOUND ) {
-      newBird = true;
-    } else {
-      newBird = false;
-    }
-
-    // now it should all be parsed
-    // if it is not in the current array of birds, we add it to the array
-    if ( newBird ) {
+    if ( validationCount != 5 ) { // if we cannot parse the data, manually create an entry. Not going to try to match against an existing entry
+      Serial.printf( "Incorrectly formatted mqtt message received. '%s' \n", payload );
       oldestBirdIndex = find_oldest_entry( birds, MAX_NOTICES );
       if ( oldestBirdIndex == -1 ) {
         oldestBirdIndex = 0;
       }
-      birds[oldestBirdIndex]->TM = time( nullptr ); // set a default value in case it is not included
+      strncpy( birds[oldestBirdIndex]->CN, payload, 74 );
+      strncpy( birds[oldestBirdIndex]->SN, "none", 5 );
+      strncpy( birds[oldestBirdIndex]->RS, "", 20 );
+      birds[oldestBirdIndex]->TM = time( nullptr );
       birds[oldestBirdIndex]->CF = 0;
-      strncpy( birds[oldestBirdIndex]->SN, " ", 2 );
-      strncpy( birds[oldestBirdIndex]->RS, "None", 5 );
 
-      for ( int i = 0; i < kvp; i++ ) {
-        printf( "\n Match key[%d] = %s\nvalue[%d] = %s\n", i, KVPpointers[i][ISA_KEY], i, KVPpointers[i][ISA_VALUE] );
-        if ( strcmp( KVPpointers[i][ISA_KEY], "CN" ) == 0 ) {
-          if ( KVPpointers[i][ISA_VALUE] != NULL ) {
-            strncpy( birds[oldestBirdIndex]->CN, KVPpointers[i][ISA_VALUE], 74 );
-          } else {
-            strncpy( birds[oldestBirdIndex]->CN, "None", 5 );
-          }
-        } else if ( strcmp( KVPpointers[i][ISA_KEY], "SN" ) == 0 ) {
-          if ( KVPpointers[i][ISA_VALUE] != NULL ) {
-            strncpy( birds[oldestBirdIndex]->SN, KVPpointers[i][ISA_VALUE], 74 );
-          }
-        } else if ( strcmp( KVPpointers[i][ISA_KEY], "RS" ) == 0 ) {
-          if ( KVPpointers[i][ISA_VALUE] != NULL ) {
-            strncpy( birds[oldestBirdIndex]->RS, KVPpointers[i][ISA_VALUE], 30 );
-            Serial.print( " Setting reason as " );
-            Serial.println( KVPpointers[i][ISA_VALUE] );
-          }
-        } else if ( strcmp( KVPpointers[i][ISA_KEY], "TM" ) == 0 ) {
-          birds[oldestBirdIndex]->TM = time( nullptr );
-        } else if ( strcmp( KVPpointers[i][ISA_KEY], "CF" ) == 0 ) {
-          if ( KVPpointers[i][ISA_VALUE] != NULL ) {
-            birds[oldestBirdIndex]->CF = atoi( KVPpointers[i][ISA_VALUE] );
-          }
-        } else {
-          printf( "\nkey[%d] = %s\nvalue[%d] = %s\n", i, KVPpointers[i][ISA_KEY], i, KVPpointers[i][ISA_VALUE] );
-        }
-      }
       curDisplay = oldestBirdIndex;
-    } else { // not a new bird so update the time stamp of the existing entry
-      for ( int i = 0; i < kvp; i++ ) {
-        if ( strcmp( KVPpointers[i][ISA_KEY], "TM" ) == 0 ) {
-          birds[matchingBird]->TM = time( nullptr );
-        } else if ( strcmp( KVPpointers[i][ISA_KEY], "CF" ) == 0 ) {
-          if ( KVPpointers[i][ISA_VALUE] != NULL ) {
-            birds[matchingBird]->CF = atoi( KVPpointers[i][ISA_VALUE] );
+
+    } else {
+
+      char *thisdata = strstr( payload, "\n" ) + strlen( "\n" );
+      // we do this first to set the target variable. future calls reference the
+      // output of the previous call
+      KVPpointers[kvp][kvpState] = strtok( thisdata, "=" );
+
+      while ( kvp < NOTICE_ELEMENTS && KVPpointers[kvp][kvpState] != NULL ) { // loop through splitting it up and saving the pointers
+        if ( kvpState == ISA_VALUE ) {                                        // update kvpState and key_value
+          kvp++;
+          kvpState                   = ISA_KEY;
+          KVPpointers[kvp][kvpState] = strtok( NULL, "=" );
+        } else {                                                  // if (kvpState == ISA_KEY)
+          if ( strcmp( KVPpointers[kvp][ISA_KEY], "CN" ) == 0 ) { // Common Name is needed to check for new sightings
+            kvpCNkey = kvp;
+          }
+          kvpState = ISA_VALUE;
+
+          token = strtok( NULL, ";" ); // test to see if there is a value for the key. empty values pull in the next key equals
+          if ( strchr( token, '=' ) == NULL ) {
+            KVPpointers[kvp][kvpState] = token;
+          } else {
+            KVPpointers[kvp][kvpState] = notFound;
           }
         }
       }
-      curDisplay = matchingBird;
     }
-    // Output the copied data from the struct array
-    for ( int i = 0; i < MAX_NOTICES; ++i ) {
-      Serial.print( "Entry " );
-      Serial.print( i + 1 );
-      Serial.print( " - CN: " );
-      Serial.print( birds[i]->CN );
-      Serial.print( " - SN: " );
-      Serial.print( birds[i]->SN );
-      Serial.print( " - RS: " );
-      Serial.print( birds[i]->RS );
-      Serial.print( " - TM: " );
-      Serial.print( ctime( &birds[i]->TM ) );
-      Serial.print( " - CF: " );
-      Serial.println( birds[i]->CF );
-    }
-    // end of call back on mqtt recv.
-  } else {
-    Serial.println( "did not see a valid name" );
-  } // did we get a valid common name
+
+    if ( kvpCNkey > -1 ) { // if we  have a common name, process the sighting, otherwise skip it
+      // test if new sighting. do not add duplicate birds to the display array
+      matchingBird = is_bird_in_array( birds, MAX_NOTICES, KVPpointers[kvpCNkey][ISA_VALUE] );
+      if ( matchingBird == MATCH_NOT_FOUND ) {
+        newBird = true;
+      } else {
+        newBird = false;
+      }
+
+      // now it should all be parsed
+      // if it is not in the current array of birds, we add it to the array
+      if ( newBird ) {
+        oldestBirdIndex = find_oldest_entry( birds, MAX_NOTICES );
+        if ( oldestBirdIndex == -1 ) {
+          oldestBirdIndex = 0;
+        }
+        birds[oldestBirdIndex]->TM = time( nullptr ); // set a default value in case it is not included
+        birds[oldestBirdIndex]->CF = 0;
+        strncpy( birds[oldestBirdIndex]->SN, " ", 2 );
+        strncpy( birds[oldestBirdIndex]->RS, "None", 5 );
+
+        for ( int i = 0; i < kvp; i++ ) {
+          printf( "\n Match key[%d] = %s\nvalue[%d] = %s\n", i, KVPpointers[i][ISA_KEY], i, KVPpointers[i][ISA_VALUE] );
+          if ( strcmp( KVPpointers[i][ISA_KEY], "CN" ) == 0 ) {
+            if ( KVPpointers[i][ISA_VALUE] != NULL ) {
+              strncpy( birds[oldestBirdIndex]->CN, KVPpointers[i][ISA_VALUE], 74 );
+            } else {
+              strncpy( birds[oldestBirdIndex]->CN, "None", 5 );
+            }
+          } else if ( strcmp( KVPpointers[i][ISA_KEY], "SN" ) == 0 ) {
+            if ( KVPpointers[i][ISA_VALUE] != NULL ) {
+              strncpy( birds[oldestBirdIndex]->SN, KVPpointers[i][ISA_VALUE], 74 );
+            }
+          } else if ( strcmp( KVPpointers[i][ISA_KEY], "RS" ) == 0 ) {
+            if ( KVPpointers[i][ISA_VALUE] != NULL ) {
+              strncpy( birds[oldestBirdIndex]->RS, KVPpointers[i][ISA_VALUE], 30 );
+              Serial.print( " Setting reason as " );
+              Serial.println( KVPpointers[i][ISA_VALUE] );
+            }
+          } else if ( strcmp( KVPpointers[i][ISA_KEY], "TM" ) == 0 ) {
+            birds[oldestBirdIndex]->TM = time( nullptr );
+          } else if ( strcmp( KVPpointers[i][ISA_KEY], "CF" ) == 0 ) {
+            if ( KVPpointers[i][ISA_VALUE] != NULL ) {
+              birds[oldestBirdIndex]->CF = atoi( KVPpointers[i][ISA_VALUE] );
+            }
+          } else {
+            printf( "\nkey[%d] = %s\nvalue[%d] = %s\n", i, KVPpointers[i][ISA_KEY], i, KVPpointers[i][ISA_VALUE] );
+          }
+        }
+        curDisplay = oldestBirdIndex;
+      } else { // not a new bird so update the time stamp of the existing entry
+        for ( int i = 0; i < kvp; i++ ) {
+          if ( strcmp( KVPpointers[i][ISA_KEY], "TM" ) == 0 ) {
+            birds[matchingBird]->TM = time( nullptr );
+          } else if ( strcmp( KVPpointers[i][ISA_KEY], "CF" ) == 0 ) {
+            if ( KVPpointers[i][ISA_VALUE] != NULL ) {
+              birds[matchingBird]->CF = atoi( KVPpointers[i][ISA_VALUE] );
+            }
+          }
+        }
+        curDisplay = matchingBird;
+      }
+      // Output the copied data from the struct array
+      for ( int i = 0; i < MAX_NOTICES; ++i ) {
+        Serial.print( "Entry " );
+        Serial.print( i + 1 );
+        Serial.print( " - CN: " );
+        Serial.print( birds[i]->CN );
+        Serial.print( " - SN: " );
+        Serial.print( birds[i]->SN );
+        Serial.print( " - RS: " );
+        Serial.print( birds[i]->RS );
+        Serial.print( " - TM: " );
+        Serial.print( ctime( &birds[i]->TM ) );
+        Serial.print( " - CF: " );
+        Serial.println( birds[i]->CF );
+      }
+      // end of call back on mqtt recv.
+    } else {
+      Serial.println( "did not see a valid name" );
+    } // did we get a valid common name
+  }
 }
 
 void wifi_ap_mode_callback( WiFiManager *myWiFiManager ) {
@@ -1145,12 +1299,21 @@ void setup() {
   create_Birdscreen();
   create_wifiConfirmScreen();
   create_wifiStartScreen();
+  create_weekly_report_screen();
+
   setup_clock();
 
   // set initial nightmode/not nightmode config
+  delay( 10000 );
+
+  Serial.println( "*****setting bird screen init night mode" );
   process_screen_objects_night( Birdscreen );
+  Serial.println( "*****setting wifi confirm screen init night mode" );
   process_screen_objects_night( wifiConfirmScreen );
+  Serial.println( "*****setting wifiscreen screen init night mode" );
   process_screen_objects_night( wifiScreen );
+  Serial.println( "processing night mode for WRS" );
+  process_screen_objects_night( WeeklyReportScreen );
 
   // start up wifi, use stored params if available
   bool wifiResult;
@@ -1201,12 +1364,12 @@ void setup() {
 
 void loop() {
 
-    update_clock();            // Update the clock
+  update_clock(); // Update the clock
 
   lv_tick_inc( 150 ); // tell LVGL how much time has passed
-  lv_task_handler();           // let the GUI do its work
-  delay( 150 );                // let this time pass
-  lv_timer_handler();          // LVGL needs to handle refreshes
+  lv_task_handler();  // let the GUI do its work
+  delay( 150 );       // let this time pass
+  lv_timer_handler(); // LVGL needs to handle refreshes
 
   mqttServer.loop(); // give the mqtt process a chance to update the bird data
   if ( strcmp( globalCurrentScreenName, "birdscreen" ) == 0 ) {
