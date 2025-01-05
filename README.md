@@ -63,13 +63,25 @@ board_build.filesystem = littlefs
 ``` 
 In Visual Studio, create a "data" folder under your project and add birds.csv to that folder. This folder should be at the same level as "src" or "include".  In Platformio, "Upload File System Image" pushes the content of the "data" folder on to the LittleFS partition.  This partition does not change when you upload a program. Any contents of the partition are replaced with the contents of the "data" folder. See this link at [Random Nerds](https://randomnerdtutorials.com/arduino-ide-2-install-esp32-littlefs/) for details on using the Arduino IDE to load files on to the partition.
 
-3. Install this code onto a CYD. You need the contents of the "src" and "include" folders, plus the libraries. The platformio.ini should help get this working under Visual Studio and PlatformIO. Building the program and uploading this to the CYD does *not* install the data file. You need to do that separately - see step 2. You can use Arduino IDE with the caveats listed above. 
+3. If needed, adjust the platformio.ini file for your specific driver, depending on which CYD variant you have. If you don't make any changes, and the CYD boots to a white screen after installation, then you probably need this change. My installation uses the ST7789, but you might use ILI9341 v2. If you need to make these changes, in platformio.ini, change
+```
+  -DST7789_DRIVER
+  to
+  -DILI9341_2_DRIVER
+```
+  Then remove this line
+```  
+  -DTFT_RGB_ORDER=TFT_BGR
+```
+4. LVGL requires a lv_conf.h file.  Compile the project so that platformio gathers the required libraries. The compile will fail, but the process makes the folders you need. Add [this](https://raw.githubusercontent.com/RuiSantosdotme/ESP32-TFT-Touchscreen/main/configs/lv_conf.h) file into the .pio/libdeps/lvgl folder under your project in Visual Studio. There should be a file called lv_conf_template.h in that folder already, but don't alter that. 
 
-4. Boot the CYD. It should start in WiFiManager config mode, acting as an access point.
+5. Compile and upload this code onto a CYD. You need the contents of the "src" and "include" folders, plus the libraries. The platformio.ini should help get this working under Visual Studio and PlatformIO. Building the program and uploading this to the CYD does *not* install the data file. You need to do that separately - see step 2. You can use Arduino IDE with the caveats listed above. 
+
+6. Boot the CYD. It should start in WiFiManager config mode, acting as an access point.
 
   ![Wifi Config Display](/assets/Wifi%20Config%20Display.jpg) 
 
-5. Configure the network settings on the CYD.
+7. Configure the network settings on the CYD.
     1. Connect to the CYD's wifi network (default network name: BirdNetDisplay, no password). 
     2. Point your browser at the display's IP address. It should be 192.168.4.1.
 
@@ -91,7 +103,7 @@ In Visual Studio, create a "data" folder under your project and add birds.csv to
 
     ![No birds yet](/assets/no%20birds%20screen.jpg)
 
-6. Configure BirdNet to send messages to the display.
+8. Configure BirdNet to send messages to the display.
     1. On the main screen, click on "Tools" on the right side of the menu. The default username is "birdnet", with no password. You may have changed this when you configured BirdNet-Pi.
     2. Click on "Settings" on the left side of the screen.
     3. In the "Notifications" box, enter `mqtt://birdnetdisplay.local/birdnetpi`.  The "birdnetdisplay" must match the hostname value you entered at step 4 above (under network setup) plus ".local". The "birdnetpi" can be anything (no spaces please). This is the the MQTT topic. The display code shows all messages and does not filter on this value.  Add one line for each CYD.
@@ -121,7 +133,7 @@ Touching the screen brings up two buttons. One button toggles night mode on/off.
 
 The display will exit wifi configuration mode after 2 minutes.
 
-The built-in light sensor controls the  backlight level. 
+The built-in light sensor controls the backlight level. 
 
 3d printable cases are available [here](https://github.com/witnessmenow/ESP32-Cheap-Yellow-Display/tree/main/3dModels).  I used [this](https://github.com/witnessmenow/ESP32-Cheap-Yellow-Display/tree/main/3dModels/Markus_CYD_Simple_Case).
 
