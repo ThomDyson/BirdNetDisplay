@@ -1,0 +1,6 @@
+# PlatformIO build artifacts
+.pio/
+.vscode/
+
+# Local CSV backups (kept outside the repo workflow)
+birds.csv.*-backup
