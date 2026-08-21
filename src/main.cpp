@@ -491,16 +491,30 @@ void display_birds( const int *whichbird ) {
           lv_label_set_text( RSLabel, birds[currentIndex]->RS );
         }
         /* ************** BEGIN IMAGE PROCESSING ************/
+        // Image canvas: 200x180 at (2, 35). Always clear first so the previous
+        // bird's pixels don't bleed past a smaller/differently-shaped new image.
+        constexpr int IMG_X = 2, IMG_Y = 35, IMG_W = 200, IMG_H = 180;
+        const uint16_t bgColor = nightmode ? 0x2081 : 0xEF7D;
+        tft.fillRect( IMG_X, IMG_Y, IMG_W, IMG_H, bgColor );
+
         String imageName = get_image_info( birds[currentIndex]->CN, globalDataFilePath, globalMetaDataFileName );
         if ( !imageName.isEmpty() ) {
           Serial.print( "Displaying " );
           Serial.println( imageName );
-          int myresult = TJpgDec.drawFsJpg( 2, 45, imageName, LittleFS );
-        } else {
-          if ( nightmode ) {
-            tft.fillRect( 2, 45, 150, 150, 0x2081 ); // same color as LVGL dark background
+          uint16_t jpgW = 0, jpgH = 0;
+          if ( TJpgDec.getFsJpgSize( &jpgW, &jpgH, imageName, LittleFS ) == 0 && jpgW > 0 && jpgH > 0 ) {
+            // TJpgDec only supports scales of 1, 2, 4, 8 — pick the smallest that fits the canvas.
+            uint8_t scale = 1;
+            while ( scale < 8 && ( jpgW / scale > IMG_W || jpgH / scale > IMG_H ) ) scale *= 2;
+            TJpgDec.setJpgScale( scale );
+            int drawW = jpgW / scale, drawH = jpgH / scale;
+            int drawX = IMG_X + ( IMG_W - drawW ) / 2;
+            int drawY = IMG_Y + ( IMG_H - drawH ) / 2;
+            TJpgDec.drawFsJpg( drawX, drawY, imageName, LittleFS );
           } else {
-            tft.fillRect( 2, 45, 150, 150, 0xEF7D ); // same color as LVGL light background
+            // Couldn't read dimensions — fall back to drawing top-left at scale 1.
+            TJpgDec.setJpgScale( 1 );
+            TJpgDec.drawFsJpg( IMG_X, IMG_Y, imageName, LittleFS );
           }
         }
       }
@@ -737,17 +751,17 @@ void create_Birdscreen() {
   lv_style_init( &timeStyle );
   TMLabel = lv_label_create( Birdscreen ); // time since siting
   lv_label_set_long_mode( TMLabel, LV_LABEL_LONG_WRAP );
-  lv_obj_set_width( TMLabel, 120 );
+  lv_obj_set_width( TMLabel, 100 );
   lv_obj_set_style_text_font( TMLabel, &lv_font_montserrat_20, LV_PART_MAIN );
   lv_obj_set_style_text_align( TMLabel, LV_TEXT_ALIGN_CENTER, 0 );
   lv_obj_add_style( TMLabel, &timeStyle, 0 );
-  lv_obj_align( TMLabel, LV_ALIGN_CENTER, 75, -40 );
+  lv_obj_align( TMLabel, LV_ALIGN_CENTER, 105, 5 );  // vertically centered with the image canvas (y=125)
   // lv_label_set_text(TMLabel, LV_SYMBOL_EYE_OPEN);
   lv_label_set_text( TMLabel, "" );
 
   RSLabel = lv_label_create( Birdscreen ); // notification reason
   lv_obj_set_style_text_font( TMLabel, &lv_font_montserrat_20, LV_PART_MAIN );
-  lv_obj_align( RSLabel, LV_ALIGN_CENTER, 75, 30 );
+  lv_obj_align( RSLabel, LV_ALIGN_CENTER, 105, 30 );
   lv_label_set_text( RSLabel, "" );
 
   CFLabel = lv_label_create( Birdscreen ); // confidence level

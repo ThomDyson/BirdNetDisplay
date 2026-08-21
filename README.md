@@ -2,7 +2,7 @@
 
 BirdNet-Pi is a program to identify birds based on their calls, running on a Raspberry Pi. It is able to recognize bird sounds from a USB microphone or sound card in realtime. It runs a local web server that shows what birds have been heard. The web site has many features, but if you just want to know what birds are around, pulling out your phone for a quick check is not ideal.
 
-This code runs on a Cheap Yellow Display to show recent information from a BirdNet installation. While it is designed for a CYD, the code could be adapted to run on any ESP32 with a different display. This project pulls images from [Cornell's Birdnet Page](https://birdnet.cornell.edu/species-list/)
+This code runs on a Cheap Yellow Display to show recent information from a BirdNet installation. While it is designed for a CYD, the code could be adapted to run on any ESP32 with a different display. This project pulls bird thumbnails from [Wikimedia Commons](https://commons.wikimedia.org/) via the Wikipedia REST API.
 
 This project requires that you have a BirdNet installation. I use [Nachtzuster's version](https://github.com/Nachtzuster/BirdNET-Pi). BirdNET-Pi is built on the [BirdNET](https://github.com/kahst/BirdNET-Analyzer) framework by [@kahst](https://github.com/kahst).
 
@@ -47,10 +47,33 @@ Display libraries like LVGL and TFT_eSPI need help decoding a JPG. This does not
 The source is configured to use platformio.ini to configure settings for TFT_eSPI.  To configure these settings under Arduino IDE, copy the [User_Setup.h](https://raw.githubusercontent.com/RuiSantosdotme/ESP32-TFT-Touchscreen/main/configs/User_Setup.h) from Random Nerds to your TFT_eSPI folder under your Arduino\libraries. Details are at [Random Nerds CYD Tutorial](https://randomnerdtutorials.com/cheap-yellow-display-esp32-2432s028r/). 
 
 ## Data file 
-The program uses a data file that holds a lookup list using the bird's common name as a key and provides the URL to get the image. Images are 150x150 thumbnails. This requires the CYD to have a partition setup big enough to hold the program and a partition to hold the look up file and a local cache for images. I use the no_OTA configuration - 2MB Apps/2MB SPIFFS (even though we use Little FS).
+The program uses a data file (`data/birds.csv`) that holds a lookup list using the bird's common name as a key and provides the URL to get the image. Images are fetched as Wikimedia Commons thumbnails at 330px wide (height varies with the source photo's aspect ratio) and drawn into a 200×180 canvas with dynamic centering and 1/2 scaling — see [Display layout](#display-layout) below. This requires the CYD to have a partition set up big enough to hold the program and a partition to hold the lookup file and a local cache for images. I use the no_OTA configuration - 2MB Apps/2MB SPIFFS (even though we use LittleFS).
+
+## Image source: Wikipedia Commons
+Earlier versions of this project pulled images from Cornell's BirdNET species list. That image gallery was removed (the `https://birdnet.cornell.edu/files/2019/09/...` URLs that older copies of `birds.csv` referenced now return 404), so the CSV in this repo has been regenerated to use Wikimedia Commons thumbnails resolved via the Wikipedia REST API.
+
+Each row uses Wikimedia's standard thumbnail URL pattern:
+```
+https://upload.wikimedia.org/wikipedia/commons/thumb/<a>/<ab>/<File>.jpg/330px-<File>.jpg
+```
+Wikimedia only serves thumbnails at a fixed set of widths ({60, 120, 250, 330, 500, ...}); 330 was chosen because, with TJpg_Decoder's power-of-2 scaling, it renders to ~165 pixels wide on the device — large enough to fill most of the 200×180 image canvas without overflowing it. Two species (Moltoni's warbler, Olive sparrow) have no JPG illustration on their English Wikipedia article and retain placeholder URLs; the display falls back to showing the bird's common name with a cleared image area.
 
 ## Image Management
 The program caches thumbnails to the local partition on the CYD. The list of cached images is stored in a metadata file so the program knows what the oldest images are. When the partition gets to 80% full, it flushes out the oldest images until there is 50% free space. Right now there is no way to manually flush the local cache. If the metadata file is deleted (left as an exercise), when the CYD is booted, all local jpgs are deleted. Any jpg on the partition that is not listed in the metadata file is deleted. Platformio handles partition sizing in the .ini file.  In Arduino IDE, this is set under Tools, Partition Scheme ...
+
+## Display layout
+The bird-detail screen (`Birdscreen`) is laid out for the 320×240 landscape display as follows:
+
+| Element | Position | Notes |
+|---|---|---|
+| `CNLabel` (common name) | Top, full-width 300px | Scrolling marquee if too long |
+| Image canvas | (2, 35), **200×180** | Background-cleared in the LVGL theme color every cycle |
+| `TMLabel` (time since detection) | `LV_ALIGN_CENTER` + (105, 5), width 100 | Vertically centered with the image canvas (y=125) |
+| `RSLabel` (notification reason / icon) | `LV_ALIGN_CENTER` + (105, 30) | Sits just below TMLabel |
+| `CFLabel` (confidence %) | Bottom-right | |
+| `countLabel` (rotation count) | Bottom-left | |
+
+**Dynamic image centering.** Each cycle the display reads the cached JPG's dimensions with `TJpgDec.getFsJpgSize()` and picks the smallest power-of-2 scale (1, 1/2, 1/4, 1/8) that still fits both dimensions inside the 200×180 canvas, then draws the result centered. The canvas is also background-cleared *before* every draw, so swapping between landscape, square, and portrait thumbnails doesn't leave stale pixels at the edges.
 
 
 ## Getting Started
@@ -63,14 +86,14 @@ board_build.filesystem = littlefs
 ``` 
 In Visual Studio, create a "data" folder under your project and add birds.csv to that folder. This folder should be at the same level as "src" or "include".  In Platformio, "Upload File System Image" pushes the content of the "data" folder on to the LittleFS partition.  This partition does not change when you upload a program. Any contents of the partition are replaced with the contents of the "data" folder. See this link at [Random Nerds](https://randomnerdtutorials.com/arduino-ide-2-install-esp32-littlefs/) for details on using the Arduino IDE to load files on to the partition.
 
-3. If needed, adjust the platformio.ini file for your specific driver, depending on which CYD variant you have. If you don't make any changes, and the CYD boots to a white screen after installation, then you probably need this change. My installation uses the ST7789, but you might use ILI9341 v2. If you need to make these changes, in platformio.ini, change
+3. If needed, adjust the platformio.ini file for your specific driver, depending on which CYD variant you have. The repo defaults to **`ILI9341_2_DRIVER`**, which is correct for the original ESP32-2432S028R (micro-USB) variant. If you have a newer USB-C variant and the CYD boots to a white screen after installation, change platformio.ini:
 ```
-  -DST7789_DRIVER
-  to
   -DILI9341_2_DRIVER
+  to
+  -DST7789_DRIVER
 ```
-  Then remove this line
-```  
+  Then add this line:
+```
   -DTFT_RGB_ORDER=TFT_BGR
 ```
 4. LVGL requires a lv_conf.h file.  Compile the project so that platformio gathers the required libraries. The compile will fail, but the process makes the folders you need. Add [this](https://raw.githubusercontent.com/RuiSantosdotme/ESP32-TFT-Touchscreen/main/configs/lv_conf.h) file into the .pio/libdeps/lvgl folder under your project in Visual Studio. There should be a file called lv_conf_template.h in that folder already, but don't alter that. 
@@ -119,7 +142,7 @@ In Visual Studio, create a "data" folder under your project and add birds.csv to
 ## Using the Display
 Birdnet-Pi will send notifications to the display based on the configuration of the Notifications section of the Settings screen. Each notification shows:
 * Common Name
-* An image of the bird from Cornell's BirdNET site (if available).
+* An image of the bird from Wikimedia Commons (if available).
 * How long ago the display received the notification.
 * The confidence percentage, shown in the lower right corner.
 * The reason for the notification if it is anything other than a simple detection. This could be a "Test Message", first detection of that species for the day, etc.
